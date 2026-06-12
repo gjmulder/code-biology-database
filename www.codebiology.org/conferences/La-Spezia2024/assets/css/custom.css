@@ -1,0 +1,27 @@
+html {
+  background-color: #2F9488 !important;
+  color: inherit;
+}
+
+.thumb-img {
+  border-color: #2F9488 !important;
+}
+
+#loupeContainer div.background {
+  background-color: #2F9488 !important;
+  color: inherit;
+}
+
+header div.background {
+  background-color: #2F9488 !important;
+  color: inherit;
+}
+
+.custom-colorable {
+  fill: #FFFFFF !important;
+}
+
+body {
+  background-color: #2F9488 !important;
+  color: #FFFFFF !important;
+}
