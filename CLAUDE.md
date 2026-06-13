@@ -58,6 +58,28 @@ literature and the canonical web presence of the field. Together with
 `biological_codes.csv` these define what Code Biology *is* — the seminal texts,
 the society, and its conferences.
 
+### What qualifies as an organic code — the minimum criteria
+Per Barbieri's definition (`www.codebiology.org/index.html`), a biological code
+is proven to exist only if **all three** of the following are demonstrated. The
+test is deliberately objective and experimentally falsifiable:
+1. **Two independent worlds of molecules** — two distinct sets of objects with no
+   necessary physical/chemical link between them (e.g. codons and amino acids).
+2. **A set of adaptors** — a *third* type of molecule that physically bridges the
+   two worlds (e.g. tRNAs). Adaptors are the "molecular fingerprints" of a code;
+   their presence is the empirical signature that coding, not mere chemistry, is
+   at work.
+3. **Arbitrariness of the coding rules** — the mapping is conventional, not
+   dictated by physical law. The rules are *compatible* with physics/chemistry
+   but **not determined** by them, so they could in principle be otherwise.
+
+This distinguishes **coding** (about *meaning*; evolution by natural conventions)
+from **copying** (about *information*; evolution by natural selection) — the two
+are held to be irreducible to each other. Supporting terms (*Adaptor*,
+*Arbitrariness*, *Natural conventions*) are formally defined in `glossary.html`.
+
+Note: not every entry in the source PDF is a "code" in this strict molecular
+sense — e.g. code 352 (SeqCode) is a nomenclature/naming code, a looser usage.
+
 ### `Code_Biology_PDFs/` — seminal texts
 The core literature defining the discipline, primarily by Marcello Barbieri
 (founder of the field) and Sam Major:
