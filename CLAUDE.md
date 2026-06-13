@@ -137,3 +137,4 @@ pages, 31 PDFs). Key content:
 1. **Testing:** For any new functionality or changes to existing functionality always write or expand code using TDD. Write a failing test first, then the feature or change
 2. **Language** Always write in pythonic readable python and prefer numpy for data management
 3. **Logging** Always use paython logging and choose DEBUG, INFO, levels suitably depending on criticality and informationality of the code
+4. **Commit cadence** Pause and commit after each completed task (one logical unit of work). Keep commits small and self-contained; do not batch multiple tasks into one commit.
