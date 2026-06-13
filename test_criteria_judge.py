@@ -166,3 +166,105 @@ def test_load_done_reads_pdf_paths_from_jsonl(tmp_path):
 
 def test_load_done_missing_file_is_empty(tmp_path):
     assert cj.load_done(str(tmp_path / "nope.jsonl")) == set()
+
+
+# --- criterion-3 model routing --------------------------------------------
+
+def test_openrouter_model_is_paid_tier():
+    # The batch uses the paid Nemotron (priority routing, no daily cap), so the
+    # model id must NOT carry the rate-limited ":free" suffix.
+    assert cj.OPENROUTER_MODEL == "nvidia/nemotron-3-ultra-550b-a55b"
+    assert not cj.OPENROUTER_MODEL.endswith(":free")
+
+
+# --- concurrent batch runner ----------------------------------------------
+
+def test_run_batch_judges_all_and_checkpoints(tmp_path):
+    ckpt = tmp_path / "ckpt.jsonl"
+    papers = [
+        {"code_number": "1", "code_name": "A", "paper_name": "P1",
+         "url": "u1", "pdf_path": "a.pdf"},
+        {"code_number": "2", "code_name": "B", "paper_name": "P2",
+         "url": "u2", "pdf_path": "b.pdf"},
+    ]
+
+    def judge_fn(paper):
+        return {"two_worlds": {"verdict": "met"},
+                "adaptors": {"verdict": "met"},
+                "arbitrariness": {"verdict": "met"}}
+
+    records = cj.run_batch(papers, judge_fn, str(ckpt), max_workers=2)
+    assert len(records) == 2
+    # every record carries paper metadata + criteria so aggregate() works
+    by_path = {r["pdf_path"]: r for r in records}
+    assert by_path["a.pdf"]["code_number"] == "1"
+    assert by_path["a.pdf"]["criteria"]["two_worlds"]["verdict"] == "met"
+    # checkpoint persisted both papers
+    assert cj.load_done(str(ckpt)) == {"a.pdf", "b.pdf"}
+
+
+def test_run_batch_skips_already_done(tmp_path):
+    ckpt = tmp_path / "ckpt.jsonl"
+    ckpt.write_text(json.dumps({"pdf_path": "a.pdf", "code_number": "1",
+                                "criteria": {}}) + "\n")
+    papers = [
+        {"code_number": "1", "code_name": "A", "paper_name": "P1",
+         "url": "u1", "pdf_path": "a.pdf"},
+        {"code_number": "2", "code_name": "B", "paper_name": "P2",
+         "url": "u2", "pdf_path": "b.pdf"},
+    ]
+    judged = []
+
+    def judge_fn(paper):
+        judged.append(paper["pdf_path"])
+        return {"arbitrariness": {"verdict": "met"}}
+
+    records = cj.run_batch(papers, judge_fn, str(ckpt), max_workers=2)
+    assert judged == ["b.pdf"]          # a.pdf skipped (already done)
+    assert len(records) == 1
+    assert cj.load_done(str(ckpt)) == {"a.pdf", "b.pdf"}
+
+
+def test_run_batch_runs_papers_concurrently(tmp_path):
+    import threading
+    import time
+
+    ckpt = tmp_path / "ckpt.jsonl"
+    papers = [{"code_number": str(i), "code_name": "C", "paper_name": "P",
+               "url": "u", "pdf_path": f"{i}.pdf"} for i in range(4)]
+
+    lock = threading.Lock()
+    state = {"current": 0, "peak": 0}
+
+    def judge_fn(paper):
+        with lock:
+            state["current"] += 1
+            state["peak"] = max(state["peak"], state["current"])
+        time.sleep(0.1)
+        with lock:
+            state["current"] -= 1
+        return {"arbitrariness": {"verdict": "met"}}
+
+    cj.run_batch(papers, judge_fn, str(ckpt), max_workers=4)
+    assert state["peak"] >= 2           # genuinely overlapped, not serialized
+
+
+def test_run_batch_isolates_failing_paper(tmp_path):
+    ckpt = tmp_path / "ckpt.jsonl"
+    papers = [
+        {"code_number": "1", "code_name": "A", "paper_name": "P1",
+         "url": "u1", "pdf_path": "good.pdf"},
+        {"code_number": "2", "code_name": "B", "paper_name": "P2",
+         "url": "u2", "pdf_path": "bad.pdf"},
+    ]
+
+    def judge_fn(paper):
+        if paper["pdf_path"] == "bad.pdf":
+            raise cj.JudgeError("model gave garbage")
+        return {"arbitrariness": {"verdict": "met"}}
+
+    records = cj.run_batch(papers, judge_fn, str(ckpt), max_workers=2)
+    # the good paper still succeeds and is checkpointed; the bad one is skipped
+    assert cj.load_done(str(ckpt)) == {"good.pdf"}
+    assert len(records) == 1
+    assert records[0]["pdf_path"] == "good.pdf"

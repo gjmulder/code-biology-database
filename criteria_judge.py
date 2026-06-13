@@ -38,9 +38,16 @@ ALL_CRITERIA = CRITERIA_12 + CRITERION_3
 VALID_VERDICTS = {"met", "not_met", "unclear"}
 
 LOCAL_MODEL = "gemma-4-31b"
-OPENROUTER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
+# Paid Nemotron (no ":free"): priority routing, no daily cap. The free tier judged
+# correctly but at ~146 s/paper (≈19 h sequential for 471); paid + concurrency
+# brings the whole criterion-3 run under an hour for ~$4. Same model/1M context.
+OPENROUTER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 # Leave headroom under the Gemma batch context (32k) for prompt + output.
 LOCAL_PAPER_TOKEN_BUDGET = 28000
+# Concurrent papers in flight for the batch runner. The criterion-3 OpenRouter
+# call is network/queue-bound (the bottleneck), so several overlap cleanly; the
+# local Gemma is --parallel 1 and simply serialises its share at the server.
+DEFAULT_WORKERS = 6
 
 
 class JudgeError(RuntimeError):
@@ -223,6 +230,59 @@ def append_checkpoint(checkpoint_path, record):
     """Append one judged-paper record to the JSONL checkpoint."""
     with open(checkpoint_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
+
+
+# --- concurrent batch runner -----------------------------------------------
+
+PAPER_META_KEYS = ("code_number", "code_name", "paper_name", "url", "pdf_path")
+
+
+def run_batch(papers, judge_fn, checkpoint_path, max_workers=DEFAULT_WORKERS,
+              done=None):
+    """Judge ``papers`` concurrently, checkpointing each as it completes.
+
+    ``judge_fn(paper)`` returns the merged criteria dict (inject
+    :func:`judge_paper` bound to its model callables in production; a fake in
+    tests). Papers whose ``pdf_path`` is already in ``done`` (default: loaded
+    from ``checkpoint_path``) are skipped, so the batch is resumable. The
+    criterion-3 OpenRouter call dominates wall time and overlaps across workers;
+    checkpoint appends are serialised under a lock. A paper that raises is logged
+    and skipped (not checkpointed), so a single bad paper never aborts the run.
+    Returns the list of records judged *this* invocation.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
+
+    if done is None:
+        done = load_done(checkpoint_path)
+    todo = [p for p in papers if p["pdf_path"] not in done]
+    logger.info("batch: %d papers to judge (%d already done), %d workers",
+                len(todo), len(done), max_workers)
+
+    write_lock = threading.Lock()
+    records = []
+
+    def work(paper):
+        criteria = judge_fn(paper)
+        record = {k: paper.get(k) for k in PAPER_META_KEYS}
+        record["criteria"] = criteria
+        return record
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(work, p): p for p in todo}
+        for fut in as_completed(futures):
+            paper = futures[fut]
+            try:
+                record = fut.result()
+            except Exception as exc:  # one bad paper must not kill the batch
+                logger.warning("skipping %s: %s", paper["pdf_path"], exc)
+                continue
+            with write_lock:
+                append_checkpoint(checkpoint_path, record)
+                records.append(record)
+            logger.info("judged %s (%d/%d)", paper["pdf_path"],
+                        len(records), len(todo))
+    return records
 
 
 # --- model adapters (thin, not unit-tested; exercised by smoke tests) ------
