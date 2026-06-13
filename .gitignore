@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Downloaded PDFs (large binaries, regenerable via download_pdfs.py)
+pdfs/
