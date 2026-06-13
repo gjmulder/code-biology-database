@@ -28,6 +28,30 @@ The extraction pipeline is implemented and passing its test suite.
 - Data-integrity logging: a `(YYYY)` year heuristic cross-checks the text
   citation count against the URL count and logs a WARNING on mismatch.
 
+## PDF Availability
+`download_pdfs.py` fetches the full-text PDF for each reference. It derives a
+DOI from the URL, then tries, in order: the Crossref `application/pdf` link,
+every Unpaywall open-access location, and the landing page's
+`citation_pdf_url` meta tag. It is **legal-OA only** — no Sci-Hub or paywall
+circumvention. See `test_download_pdfs.py` (30 tests, fully offline).
+
+**Current state (last full run, from a non-institutional home network):**
+- **471 of 2240 unique references downloaded (~21%)** → `pdfs/` (gitignored, 2.1 GB;
+  regenerate with `python3 download_pdfs.py`). 49 duplicate citations share a DOI.
+- **1769 not retrievable**, listed with reasons in `failed_downloads.csv`:
+  - *Hard paywall, no OA copy* (the bulk) — Elsevier/ScienceDirect, Cell,
+    Nature-subscription, Springer, Wiley, OUP, AAAS/Science, T&F. No legal
+    source without a subscription.
+  - *CDN bot-blocked but actually OA* — e.g. MDPI (~56): Cloudflare returns 403
+    to scripted clients. Downloadable by hand in a browser.
+  - *PMC-only* — NCBI / Europe PMC block non-interactive PDF fetches from this
+    network (403 / HTML interstitial on every endpoint).
+
+**Resumability:** re-runs skip PDFs already on disk and reuse
+`crossref_cache.json` + `unpaywall_cache.json`, so effort is spent only on new
+attempts. Coverage would rise substantially from an institutional network
+(EZproxy/OpenAthens) or with an Unpaywall-plus-repository proxy.
+
 ## AI Goals & Responsibilities
 - **Primary Task:** Parse the CSV to process the codes and their associated citations.
 - **Specific Extraction:** For every code, parse the references to isolate the **paper name** and map it directly to its corresponding **hyperlink/URL**.
