@@ -77,9 +77,16 @@ Criterion 3 (*arbitrariness* — the subtle, contested criterion) is judged by
 the whole paper; key in repo `.env`, gitignored). This runs off-box, not on
 asushimu. **Smoke test 2026-06-13: correct & grounded verdict, but 145.8 s for one
 10k-token paper on the FREE tier** (low-priority queue + long internal reasoning).
-Sequential, 471 papers ≈ 19 h, and the free tier has a daily request cap. For the
-real batch, use the **paid** `nvidia/nemotron-3-ultra-550b-a55b` ($0.5/$2.5 per M;
-whole run ≈ $4) and/or concurrent requests.
+Sequential, 471 papers ≈ 19 h, and the free tier has a daily request cap.
+
+**Resolved 2026-06-13 (user-approved):** batch now uses the **paid**
+`nvidia/nemotron-3-ultra-550b-a55b` (no `:free` — same model/1M context, priority
+routing, no daily cap; whole run ≈ $4) **with concurrency**. `criteria_judge.run_batch`
+runs `DEFAULT_WORKERS=6` papers in a `ThreadPoolExecutor`; the OpenRouter call is the
+overlapping bottleneck while the local Gemma (`--parallel 1`) serialises its share.
+Resumable JSONL checkpoint + per-paper failure isolation. This turns the ~19 h
+sequential run into well under an hour. **Requires a funded OpenRouter account**
+(paid models 402 without credit) — confirm balance before the full 471 batch.
 
 ### Model swap (June 2026): Qwen3.6-27B → Gemma-4-31B + MTP
 
