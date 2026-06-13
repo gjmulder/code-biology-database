@@ -15,3 +15,8 @@ This project processes Code Biology data from `biological_codes.csv` (derived fr
 2. **Data Parsing:** Handle string splitting carefully, as multiple citations and URLs are bundled in single cells.
 3. **Libraries:** Default to Python (`pandas`, `re`) for string manipulation and data extraction. 
 4. **Error Handling:** Log any code categories where the number of parsed paper names does not match the number of parsed URLs.
+
+## Code development rules
+1. **Testing:** For any new functionality or changes to existing functionality always write or expand code using TDD. Write a failing test first, then the feature or change
+2. **Language** Always write in pythonic readable python and prefer numpy for data management
+3. **Logging** Always use paython logging and choose DEBUG, INFO, levels suitably depending on criticality and informationality of the code
