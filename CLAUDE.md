@@ -1,9 +1,32 @@
-# AGENTS.md
+# CLAUDE.md
 
 ## Project Context
 This project processes Code Biology data from `biological_codes.csv` (derived from `Biological_Code_List_20260531.pdf`).
 - **Expected Code Categories:** 435
 - **Expected References:** 2299
+
+## Current Status
+The extraction pipeline is implemented and passing its test suite.
+
+- **`extract_csv.py`** — parses the PDF directly with `pdfplumber` and emits
+  `biological_codes.csv` with columns `Code Number, Code Name, Paper Name, URL`.
+  Each citation in the source is a hyperlink whose anchor text is the full
+  reference, so hyperlink runs (not text splitting) are the extraction anchor.
+- **`test_extract.py`** — pytest suite (18 tests) covering code coverage,
+  contiguity, known per-code reference counts, URL validity, cross-page
+  continuation, and cross-row hyperlink-bleed regressions. Run with `pytest`.
+- **Output:** 2290 references across all **435** codes (within tolerance of the
+  quoted 2299). One reference (code 352, SeqCode) has citation text but no
+  hyperlink, so it carries an empty URL.
+
+### Key implementation notes
+- A code's citation list can spill across pages; the "current" code is carried
+  over page boundaries since continuation pages lack a left-column number.
+- A hyperlink rectangle sits a few points *above* its row's number digit, so row
+  bands are shifted up by `ANCHOR_SLACK` to stop a row stealing the next row's
+  first link.
+- Data-integrity logging: a `(YYYY)` year heuristic cross-checks the text
+  citation count against the URL count and logs a WARNING on mismatch.
 
 ## AI Goals & Responsibilities
 - **Primary Task:** Parse the CSV to process the codes and their associated citations.
