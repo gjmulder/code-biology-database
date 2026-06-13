@@ -52,6 +52,54 @@ circumvention. See `test_download_pdfs.py` (30 tests, fully offline).
 attempts. Coverage would rise substantially from an institutional network
 (EZproxy/OpenAthens) or with an Unpaywall-plus-repository proxy.
 
+## Code Biology Definitional Database
+Beyond the code/citation list, the repo holds a corpus of the foundational
+literature and the canonical web presence of the field. Together with
+`biological_codes.csv` these define what Code Biology *is* — the seminal texts,
+the society, and its conferences.
+
+### `Code_Biology_PDFs/` — seminal texts
+The core literature defining the discipline, primarily by Marcello Barbieri
+(founder of the field) and Sam Major:
+- **The Organic Codes: An Introduction to Semantic Biology** (Barbieri) — the
+  founding monograph. Two copies: `The_Organic_Codes_an_introduction_to_semantic_biol.pdf`
+  and `The_organic_codes_An_introduction_t_z_library_sk,_1lib_sk,.pdf`.
+- **Introduction to Code Biology** — Barbieri (2014).
+- **What Is Code Biology?** — Barbieri (2018).
+- **Codes and Evolution — The Origin of Absolute Novelties** — Barbieri (2024).
+- **Life and Semiosis: The Real Nature of Information and Meaning** — Barbieri.
+- **A Simple Measure for Biocomplexity** — Barbieri.
+- **Codes across (life)sciences** — interdisciplinary survey (final published).
+- **Biological Codes: A Field Guide for Code Hunters.**
+- **Archetypes and Code Biology** — Major (2021).
+- **From Code to Archetype** — Major (2025) (`.pdf` + `.txt` transcript).
+
+### `www.codebiology.org/` — society web mirror
+A static mirror of the International Society of Code Biology website (102 HTML
+pages, 31 PDFs). Key content:
+- **`index.html`** — the field's public definition ("more than 200 biological
+  codes have been discovered"; codes as a third component of life beyond
+  chemistry and information).
+- **`glossary.html`** — terminology by Barbieri, de Beule & Hofmeyr (~100 terms:
+  semiosis, codepoiesis, organic meaning, Umwelt, …).
+- **`brief-history.html`** — Barbieri's origin story of the field (genotype/
+  phenotype/ribotype trinity, 1981 onward).
+- **The society's published code lists** — `database.html` indexes two editions:
+  - `database.pdf` — **First Database, December 2022: 237 codes.**
+  - `second-database.pdf` — **Second Database, May 2026: 418 codes.**
+  These are the upstream lineage of the project's source
+  `Biological_Code_List_20260531.pdf`, but **not identical to it** — that file is
+  a later sibling (different md5/size) from which extraction recovers **435**
+  codes, vs the 418 the website quotes for the second edition. Treat the source
+  PDF as authoritative for this project; the website figures are for context.
+- **Society governance** — `society.html`, `members-of-the-society.html`,
+  `application.html`, the governing-board pages (2012, 2018, 2022), `pdf/constitution.pdf`.
+- **`conferences/`** — every ISCB meeting, one folder per event: Jena 2015,
+  Urbino 2016, Hungary 2017, Granada 2018, Friedrichsdorf 2019, Luznica 2021,
+  Olomouc 2022, Guimarães 2023, La Spezia 2024, Zagreb 2025, Guimarães 2026 —
+  plus calls for papers, programmes, and `conferences/pdf/` abstracts/papers.
+- **`videos.html`, `photogalleries.html`, `Immagini/`** — media archive.
+
 ## AI Goals & Responsibilities
 - **Primary Task:** Parse the CSV to process the codes and their associated citations.
 - **Specific Extraction:** For every code, parse the references to isolate the **paper name** and map it directly to its corresponding **hyperlink/URL**.
