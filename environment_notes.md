@@ -58,11 +58,16 @@ alongside the MTP drafter (prod sits at ~23.2/24.6 GB at 16k), so an offline
   else identical to prod (alias `gemma-4-31b`, q8_0 KV, jinja, deepseek reasoning).
   Trades ~2× decode (back to ~33 tok/s dense) for the larger context — fine for an
   overnight batch.
-- **State as of 2026-06-13:** batch launcher **staged but NOT active**; production
-  (`start_llama.sh`, Gemma+MTP@16k) is **live and unchanged**. Production was
-  backed up to **`~/start_llama.prod.bak`** before staging.
-  - Activate batch: `cp ~/start_llama_batch.sh ~/start_llama.sh && sudo systemctl restart llama-server`
+- **State as of 2026-06-13 (ACTIVE):** batch launcher is **live** — swapped in and
+  `llama-server` restarted (user OK'd). Verified: `--ctx-size 32768`, **no
+  `--model-draft`/`--spec-type`**, `n_ctx = 32768`, health 200, VRAM **23333/24564
+  MiB** (~1.2 GB free — no OOM). End-to-end local criteria-1&2 judge on a real paper
+  ran in 35.3 s (dense, no MTP). **Production voice agent is OFFLINE while this batch
+  runs** — restore prod when the batch finishes.
   - Restore prod:  `cp ~/start_llama.prod.bak ~/start_llama.sh && sudo systemctl restart llama-server`
+  - Re-activate batch: `cp ~/start_llama_batch.sh ~/start_llama.sh && sudo systemctl restart llama-server`
+  - Production (`start_llama.sh`, Gemma+MTP@16k) backed up to **`~/start_llama.prod.bak`**
+    (md5-verified identical to the pre-swap `start_llama.sh`).
   - If 32k OOMs, drop `--ctx-size` to 24576 (still >50% of papers fit whole).
 
 ### OpenRouter criterion-3 judge (Nemotron, off-box)
