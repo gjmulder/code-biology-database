@@ -40,6 +40,53 @@ def test_sample_extra_papers_zero_returns_empty():
     assert ei.sample_extra_papers(_pool(5), set(), n=0, seed=1) == []
 
 
+def test_build_controls_input_has_no_papers():
+    # controls-only embed: no paper text extracted, just prototypes + controls so the
+    # GPU run captures the 2 control vectors without re-embedding the whole corpus
+    proto = {"two_worlds": {"pos": ["a"], "neg": ["b"]}}
+    controls = {"genetic_code_positive": "the genetic code maps codons to amino acids",
+                "deterministic_chemistry": "stereochemistry fixes the pairing"}
+    payload = ei.build_controls_input(proto, controls)
+    assert payload["papers"] == {}
+    assert payload["prototypes"] is proto
+    assert payload["controls"] is controls
+
+
+def test_run_remote_controls_only_appends_flag(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(cmd, check=True, **kw):
+        calls.append(cmd)
+        class R:
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(ei.subprocess, "run", fake_run)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "embed_score.py").write_text("")
+    (tmp_path / "run_harrier_embed.py").write_text("")
+    (tmp_path / "in.json").write_text("{}")
+    ei.run_remote("host", "/remote", "in.json", "out.json", "model",
+                  use_4bit=True, cuda_devices="2", max_seq=16384, controls_only=True)
+    remote_cmd = next(c for c in calls if c[:2] == ["ssh", "host"]
+                      and "run_harrier_embed.py" in c[-1])
+    assert "--controls-only" in remote_cmd[-1]
+
+
+def test_run_remote_default_omits_controls_only(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(ei.subprocess, "run",
+                        lambda cmd, check=True, **kw: calls.append(cmd) or type("R", (), {"returncode": 0})())
+    monkeypatch.chdir(tmp_path)
+    for f in ("embed_score.py", "run_harrier_embed.py", "in.json"):
+        (tmp_path / f).write_text("")
+    ei.run_remote("host", "/remote", "in.json", "out.json", "model",
+                  use_4bit=True, cuda_devices="2", max_seq=16384)
+    remote_cmd = next(c for c in calls if c[:2] == ["ssh", "host"]
+                      and "run_harrier_embed.py" in c[-1])
+    assert "--controls-only" not in remote_cmd[-1]
+
+
 def test_build_pool_keeps_only_on_disk_and_dedupes(tmp_path, monkeypatch):
     # two rows share a DOI (same pdf path); a third has no file on disk
     rows = [

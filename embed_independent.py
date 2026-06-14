@@ -99,8 +99,14 @@ def build_input(recs, prototypes, controls, char_budget):
     return {"papers": papers, "prototypes": prototypes, "controls": controls}
 
 
+def build_controls_input(prototypes, controls):
+    """Controls-only embed input: prototypes + controls, **no papers** — so the GPU run
+    captures the control vectors in one model load without re-embedding the corpus."""
+    return {"papers": {}, "prototypes": prototypes, "controls": controls}
+
+
 def run_remote(host, remote_dir, in_path, out_path, model, use_4bit, cuda_devices,
-               max_seq):
+               max_seq, controls_only=False):
     """scp the runner + input to the GPU host, run it pinned to the 3090 Ti, fetch out.
 
     The fetched JSON is a transient transport artifact — the caller loads it into
@@ -114,9 +120,10 @@ def run_remote(host, remote_dir, in_path, out_path, model, use_4bit, cuda_device
     # fragmentation. The chunk method stays at 8k windows (proven to fit).
     env = (f"CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES={cuda_devices} "
            f"PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True")
+    co = "--controls-only" if controls_only else ""
     cmd = (f"cd {remote_dir} && {env} python3 run_harrier_embed.py --model {model} "
            f"--in {os.path.basename(in_path)} --out embed_out.json "
-           f"--max-seq {max_seq} {flag}")
+           f"--max-seq {max_seq} {flag} {co}")
     log.info("remote: %s", cmd)
     subprocess.run(["ssh", host, cmd], check=True)
     subprocess.run(["scp", "-q", f"{host}:{remote_dir}/embed_out.json", out_path],
@@ -376,6 +383,10 @@ def main():
     ap.add_argument("--recompute", action="store_true",
                     help="offline (no GPU): rescore from persisted vectors with the "
                          "space-level levers, write leverred e + pole widths, re-report")
+    ap.add_argument("--controls-only", action="store_true",
+                    help="one cheap GPU run embedding ONLY the control texts (capture "
+                         "control_vectors), upsert them, then recompute so the controls "
+                         "are scored leverred; the 219 persisted papers are untouched")
     ap.add_argument("--whiten-k", type=int, default=es_mod.DEFAULT_WHITEN_K,
                     help="top-k principal components removed in whitening (0 = off; the "
                          "20-paper smoke test found k>=1 hurt — raise only on a big corpus)")
@@ -391,6 +402,34 @@ def main():
             recompute_from_db(conn, args.md, args.csv, args.whiten_k, args.shared_strength)
         finally:
             conn.close()
+        return
+
+    if args.controls_only:
+        proto_raw = json.load(open(args.prototypes, encoding="utf-8"))
+        prototypes = load_prototypes(args.prototypes)
+        controls = proto_raw.get("_controls", {})
+        log.info("controls-only GPU run: embedding %d control text(s); papers untouched",
+                 len(controls))
+        payload = build_controls_input(prototypes, controls)
+        with open(args.in_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        out_tmp = "embed_out.json"
+        run_remote(args.host, args.remote_dir, args.in_path, out_tmp, args.model,
+                   use_4bit=not args.no_4bit, cuda_devices=args.cuda_devices,
+                   max_seq=args.max_seq, controls_only=True)
+        with open(out_tmp, encoding="utf-8") as f:
+            out = json.load(f)
+        run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        conn = db.connect()
+        try:
+            db.store(conn, out, [], run_ts)   # upserts control_vectors only (no papers)
+            log.info("stored %d control vector(s) to MySQL",
+                     len(out.get("control_vectors", {})))
+            # now rescore the controls through the corpus geometry + regenerate the report
+            recompute_from_db(conn, args.md, args.csv, args.whiten_k, args.shared_strength)
+        finally:
+            conn.close()
+        os.remove(out_tmp)
         return
 
     if args.report_only:

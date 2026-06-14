@@ -77,6 +77,43 @@ def _crit_scores(doc_vec, poles):
     return {c: embed_score.contrastive_score(doc_vec, poles[c]) for c in poles}
 
 
+def embed_controls(controls, encode, poles):
+    """Embed each control text once → ``(control_scores, control_vectors)``.
+
+    ``control_scores[name][criterion] = e`` is the legacy double-cosine (kept for
+    transport); ``control_vectors[name]`` is the raw representative vector as a plain
+    float list, so the driver can rescore the controls **offline through the same corpus
+    geometry as the papers** (leverred controls). Empty controls → two empty dicts."""
+    scores, vectors = {}, {}
+    for name, text in controls.items():
+        cv = encode([text])[0]
+        scores[name] = _crit_scores(cv, poles)
+        vectors[name] = np.asarray(cv, dtype=np.float64).tolist()
+    return scores, vectors
+
+
+def build_controls_only_output(controls, encode, poles, model, dim):
+    """Assemble a controls-only ``embed_out`` payload: the control vectors only, with
+    **no** paper-level scores/doc_vectors. Storing this upserts ``control_vectors``
+    without touching the already-persisted corpus, so capturing the 2 control vectors
+    costs one model load instead of re-embedding all 219 papers."""
+    control_scores, control_vectors = embed_controls(controls, encode, poles)
+    pole_vectors = {c: {"pos": np.asarray(poles[c]["pos"], dtype=np.float64).tolist(),
+                        "neg": np.asarray(poles[c]["neg"], dtype=np.float64).tolist()}
+                    for c in poles}
+    return {
+        "scores": {},
+        "doc_vectors": {},
+        "pole_vectors": pole_vectors,
+        "pole_separation": embed_score.pole_separation(poles),
+        "controls": control_scores,
+        "control_vectors": control_vectors,
+        "model": model,
+        "dim": dim,
+        "methods": METHODS,
+    }
+
+
 def plan_windows(papers, tokenizer, chunk_size, chunk_overlap):
     """Pre-tokenize every paper's full text so the chunk-method total is known up
     front. Returns ``{pid: [window_ids, ...]}`` (one tokenisation pass, reused for
@@ -143,6 +180,10 @@ def main():
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--chunk-size", type=int, default=8192)
     ap.add_argument("--chunk-overlap", type=int, default=4096)
+    ap.add_argument("--controls-only", action="store_true",
+                    help="embed only the control texts (capture control_vectors) and skip "
+                         "the paper corpus — one model load instead of re-embedding all "
+                         "papers; storing this upserts control_vectors only")
     args = ap.parse_args()
 
     with open(args.inp, encoding="utf-8") as f:
@@ -157,6 +198,15 @@ def main():
 
     log.info("building %d criterion poles", len(prototypes))
     poles = embed_score.build_poles(prototypes, encode)
+
+    if args.controls_only:
+        dim = int(model.get_sentence_embedding_dimension())
+        out = build_controls_only_output(controls, encode, poles, args.model, dim)
+        with open(args.out, "w", encoding="utf-8") as f:
+            json.dump(out, f, indent=2)
+        log.info("wrote %s (controls-only: %d control vectors, no papers)",
+                 args.out, len(out["control_vectors"]))
+        return
 
     # Pre-tokenise every paper so the chunk-method denominator is known up front;
     # full/abstract are exactly one embed per paper.
@@ -184,14 +234,9 @@ def main():
              progress["done"]["abstract"], total["abstract"],
              progress["done"]["chunk"], total["chunk"])
 
-    control_scores, control_vectors = {}, {}
-    if controls:
-        for name, text in controls.items():
-            cv = encode([text])[0]
-            control_scores[name] = _crit_scores(cv, poles)
-            # keep the raw control vector too, so the driver can rescore the controls
-            # offline through the same corpus geometry as the papers (leverred controls).
-            control_vectors[name] = cv.tolist()
+    # keep the raw control vectors too, so the driver can rescore the controls offline
+    # through the same corpus geometry as the papers (leverred controls).
+    control_scores, control_vectors = embed_controls(controls, encode, poles)
 
     # Raw vectors travel as plain float lists; the driver packs them to float32 BLOBs
     # in MySQL so the contrast math can be recomputed offline (no GPU re-embed).
