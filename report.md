@@ -707,12 +707,12 @@ Bounds the dynamic range of `e`: ≈+1 means the poles overlap and magnitudes ar
 
 ## Control checks
 
-> ⚠️ These control scores are the **prior contrastive** values — control document vectors are not persisted, so the offline recompute cannot re-score them with the levers. Re-embed with control-vector capture to refresh them.
+> Scored through the same corpus geometry (μ / whitening / decongested axes) as the papers — directly comparable to the per-paper `e`.
 
 genetic-code control should read high on all three; deterministic-chemistry should read low on `arbitrariness`.
 
 | control | two_worlds | adaptors | arbitrariness |
 | --- | --- | --- | --- |
-| deterministic_chemistry_negative | -0.056 | -0.154 | -0.179 |
-| genetic_code_positive | +0.146 | +0.125 | +0.126 |
+| deterministic_chemistry_negative | -0.025 | -0.194 | -0.224 |
+| genetic_code_positive | +0.184 | +0.153 | +0.092 |
 
