@@ -117,14 +117,23 @@ def aggregate_chunks(scores):
 
 
 def pole_separation(poles):
-    """Diagnostic: pairwise cosine between criteria's pos prototypes and between their
-    neg prototypes. Near-identical negatives (cosine ≳0.9) mean the poles muddied into
-    a generic 'mere chemistry' axis — the acceptable exception is adaptors↔arbitrariness,
-    which are theoretically coupled."""
+    """Diagnostic with two complementary views:
+
+    * ``pos`` / ``neg`` — pairwise cosine *between criteria* for the pos prototypes and
+      for the neg prototypes. Near-identical negatives (cosine ≳0.9) mean the poles
+      muddied into a generic 'mere chemistry' axis — the acceptable exception is
+      adaptors↔arbitrariness, which are theoretically coupled.
+    * ``within`` — *within-criterion* cosine between that criterion's own pos and neg
+      prototype. This is the **pole width**: it bounds the dynamic range of ``e``. A
+      value near +1 means the two poles overlap and ``e`` is compressed (magnitudes are
+      not calibrated, only ranks are trustworthy); values toward 0 or −1 mean the poles
+      are well separated and magnitudes carry signal. Widen the poles (more polar,
+      register-matched passages in ``prototypes.json``) until this drops."""
     crits = list(poles)
 
     def matrix(key):
         return {f"{a}~{b}": float(_l2(poles[a][key]) @ _l2(poles[b][key]))
                 for i, a in enumerate(crits) for b in crits[i + 1:]}
 
-    return {"pos": matrix("pos"), "neg": matrix("neg")}
+    within = {c: float(_l2(poles[c]["pos"]) @ _l2(poles[c]["neg"])) for c in crits}
+    return {"pos": matrix("pos"), "neg": matrix("neg"), "within": within}

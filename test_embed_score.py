@@ -66,6 +66,21 @@ def test_pole_separation_reports_pairwise_cosines():
     assert np.isclose(sep["pos"]["two_worlds~adaptors"], 0.0)   # orthogonal pos poles
 
 
+def test_pole_separation_reports_within_criterion_pole_width():
+    # The within-criterion pos<->neg cosine is the actual "pole width": cos near 1
+    # means narrow/overlapping poles and a compressed dynamic range for e; cos near
+    # -1 (or 0) means wide, well-separated poles where magnitudes are meaningful.
+    poles = {
+        "two_worlds": {"pos": [1, 0, 0], "neg": [1, 0, 0]},     # degenerate: zero width
+        "adaptors": {"pos": [0, 1, 0], "neg": [1, 0, 0]},       # orthogonal: wide
+        "arbitrariness": {"pos": [1, 0, 0], "neg": [-1, 0, 0]}, # antipodal: widest
+    }
+    sep = es.pole_separation(poles)
+    assert np.isclose(sep["within"]["two_worlds"], 1.0)
+    assert np.isclose(sep["within"]["adaptors"], 0.0)
+    assert np.isclose(sep["within"]["arbitrariness"], -1.0)
+
+
 def test_real_prototypes_load_with_three_criteria():
     proto = es.load_prototypes("prototypes.json")
     assert set(proto) == set(es.CRITERIA)
