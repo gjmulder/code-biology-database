@@ -52,7 +52,7 @@ natural selection). Not every PDF entry is a "code" in this strict sense — e.g
 
 ## 2. The data & processing pipeline (reproducible, end-to-end)
 
-Each step lists **script → input → output → tests**. Run `pytest` (162 tests, fully
+Each step lists **script → input → output → tests**. Run `pytest` (178 tests, fully
 offline) after any change. MySQL on asushimu is the system of record from step 5 on.
 
 1. **Extract the code list** — `extract_csv.py`
@@ -107,8 +107,8 @@ offline) after any change. MySQL on asushimu is the system of record from step 5
    (sampling) or `judge_corpus.py` (corpus backfill)
    - in: papers on disk + `biological_codes.csv` · out: `sample_verdicts.jsonl`
      (resumable APPEND checkpoint — the file system-of-record for spend safety) →
-     upserted into MySQL `embedding_scores` (verdict/confidence only; the embedding `e` is
-     left untouched, via `db.update_verdicts`).
+     upserted into the run-agnostic MySQL `verdicts` table (judged once, shared by every
+     embedding run; the embedding axis is untouched, via `db.update_verdicts`).
    - **Routing:** criteria 1 & 2 (concrete) → local **Gemma-4-31B** (free); criterion 3
      (*arbitrariness*, subtle) → paid **Nemotron** (`nvidia/nemotron-3-ultra-550b-a55b`,
      1M ctx, reads whole paper) via OpenRouter. `run_batch` is concurrent
@@ -128,16 +128,25 @@ offline) after any change. MySQL on asushimu is the system of record from step 5
 ## 3. MySQL schema (`db.py`) — system of record
 
 DB `codebiology` on asushimu (host/connection detail in `@environment_notes.md`). Vectors
-are float32 LE bytes in `LONGBLOB`. Tables:
-- **`doc_vectors`** (`code_number, pdf_path, method, chunk_idx, dim, vec`),
-  **`pole_vectors`** (`criterion, pole, dim, vec`), **`control_vectors`** (`name, dim, vec`)
-  — the **raw vectors** that make offline `--recompute` possible.
-- **`embedding_scores`** — one row per `(code_number, pdf_path, method, criterion)` with
-  `e`, `verdict`, `confidence`, `model`, `run_ts`. **`code_number` is the leading PK
-  column.** `--recompute` upserts `e` only (preserving the verdict); `update_verdicts`
-  upserts verdict/confidence only (preserving `e`).
+are float32 LE bytes in `LONGBLOB`.
+
+**Run-keyed (2026-06-14):** every embedding table carries `run VARCHAR(64) NOT NULL DEFAULT
+'baseline'` as its **leading PK column**, so multiple embedding models coexist
+non-destructively (harrier = `baseline`; a future gte pass would be `gte-qwen2`). The
+driver/`sweep_levers.py` take `--run`; `init_schema` runs an idempotent `migrate_runs` that
+adds the column + rebuilds PKs on the existing DB. Tables:
+- **`doc_vectors`** (`run, code_number, pdf_path, method, chunk_idx, dim, vec`),
+  **`pole_vectors`** (`run, criterion, pole, dim, vec`), **`control_vectors`** (`run, name,
+  dim, vec`) — the **raw vectors** that make offline `--recompute` possible.
+- **`embedding_scores`** — one row per `(run, code_number, pdf_path, method, criterion)` with
+  `e`, `model` (the *embedding* model), `run_ts`. **Verdict/confidence are no longer here.**
+  `--recompute` upserts `e` only.
+- **`verdicts`** — **run-agnostic** normalised table, one row per `(code_number, pdf_path,
+  criterion)` with `verdict`, `confidence`, `model` (the *judge* model), `run_ts`. The LLM
+  judge is independent of the embedding model, so verdicts are judged once and shared by
+  every run via a JOIN on `(code_number, pdf_path, criterion)`; `update_verdicts` upserts here.
 - **`pole_separation`** (incl. centred `within` rows), **`control_scores`**, **`run_meta`**
-  (lever params + scoring mode).
+  (lever params + scoring mode) — all run-scoped.
 
 ## 4. The four space-level levers — offline scoring (`embed_score.py`)
 
@@ -176,8 +185,8 @@ only `adaptors` wanted lower (s=0 → +0.343 vs +0.310), inside the overfit marg
 cell wins all three, and **per-criterion argmax selection was rejected as overfitting** 217
 *synthetic, unreliable* labels (esp. arbitrariness's 2 positives). **Decision: keep
 `k=0, strength=0.5`.** The binding constraint is the model + pole separation (`within` still
-0.51–0.68), not the levers — the empirical license for the model-swap (§ next steps), not more
-lever tuning. `sweep_levers.py` is kept as the re-runnable diagnostic for a future model's vectors.
+0.51–0.68), not the levers. `sweep_levers.py` is kept as the re-runnable diagnostic for a
+future model's vectors. (The model-swap that this licensed was built then shelved — see §8.)
 
 ## 5. First useful result (2026-06-14) — ρ is now measurable
 
@@ -223,12 +232,11 @@ set:
 - **Next quality step:** re-tune the judge prompts for paragraph-level context, then a
   single higher-quality run sending **all three** criteria to Nemotron (≈ $9). A gold-set
   κ/F1 validation of the verdicts themselves remains future work.
-- **Backlog:** refined ranking via a cross-encoder over the top candidates.
 
 ## 7. Development, testing & reporting rules
 
 1. **TDD** — for any new or changed functionality, write a failing test first, then the
-   change. The suite is **162 tests, fully offline** (fake encoder, no GPU/DB needed).
+   change. The suite is **178 tests, fully offline** (fake encoder, no GPU/DB needed).
 2. **Language** — pythonic, readable; prefer numpy for data management.
 3. **Logging** — pythonic `logging`, DEBUG/INFO chosen by criticality.
 4. **Commit cadence** — pause and commit after each completed logical unit; small,
@@ -242,3 +250,23 @@ The production `llama-server` (Home Assistant voice agent) is **OFFLINE** — th
 freed for this project's GPU/judging work. Restore **only at project end**:
 `cp ~/start_llama.prod.bak ~/start_llama.sh && sudo systemctl restart llama-server`.
 (Operational detail in `@environment_notes.md`.)
+
+## 8. Model swap shelved — likely at the measurement ceiling (2026-06-14)
+
+The run-keyed schema (§3) was built to host a head-to-head against a second embedding model,
+**gte-Qwen2-7B-instruct** (Q8_0 GGUF via a transient llama-server). The runner
+(`run_gte_embed.py`, `start_llama_embed.sh`, driver `--engine llamacpp`) is **complete and
+tested but the GPU pass was not run** — shelved deliberately:
+- `within` (+0.68/+0.63/+0.52) indicts **pole geometry**, and gte is the *same* decoder-only
+  last-token architecture as harrier — the documented source of the anisotropy/topicality
+  halo (§4) — so the swap is unlikely to widen the poles. Kept as a tested artifact; the
+  `run` column means a future pass is non-destructive if ever wanted.
+- The remaining label-free lever is **prototype/pole quality** (sharper contrastive pos/neg
+  passages, esp. arbitrariness). Iterable cheaply: edit `prototypes.json` → re-embed only the
+  poles → offline recompute `within`/`e`. **Expected gain is small** — the prototypes are
+  already corpus-mined and the pos/neg passages are topically collinear by construction.
+- **Honest read:** the levers are exhausted, the model swap is judged unpromising, and
+  prototype edits are expected to move things only marginally. The genuine constraint is now
+  **label quality, not the embedding** — the verdicts are unreliable (§6) and arbitrariness
+  has only 2 positives, so ρ can't even adjudicate fine gains. The next real step is a
+  re-tuned judge + a gold-set validation, not more embedding-side tuning.
