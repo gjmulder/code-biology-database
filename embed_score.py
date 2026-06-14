@@ -110,6 +110,35 @@ def whiten(vecs, k):
     return X - (X @ top.T) @ top       # project the top-k subspace out
 
 
+def shared_direction(axes):
+    """Dominant direction shared across the per-criterion difference axes.
+
+    The three criteria's poles all sit in the same 'code biology' register, so their
+    axes ``{a_c}`` share a common topicality component — the source of the run-1 halo
+    where an on-topic paper (code 428) topped *every* criterion, including ones its
+    verdict marked ``not_met``. This returns that common direction as the first right
+    singular vector (first PC, **uncentred** — we want the shared direction, not the
+    spread) of the stacked unit axes, sign-fixed to point with the bulk of the axes."""
+    A = _l2(np.asarray(axes, dtype=np.float64))     # unit rows
+    _, _, Vt = np.linalg.svd(A, full_matrices=False)
+    s = _l2(Vt[0])
+    if float((A @ s).sum()) < 0:                     # deterministic sign
+        s = -s
+    return s
+
+
+def orthogonalize(axis, shared):
+    """Partial ``axis`` against the ``shared`` register direction.
+
+    ``a⊥ = normalize(a − (a·ŝ) ŝ)`` — removes the shared-topicality component so the
+    projection measures only the criterion-specific (pos-vs-its-own-neg) contrast, not
+    how on-topic the text is. A zero residual (axis parallel to ``shared``) stays zero
+    via the norm floor."""
+    a = np.asarray(axis, dtype=np.float64)
+    s = _l2(shared)
+    return _l2(a - float(a @ s) * s)
+
+
 def axis_vector(pole):
     """Unit difference axis pointing from the negative toward the positive pole.
 

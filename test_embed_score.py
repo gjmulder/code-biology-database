@@ -169,6 +169,44 @@ def test_whiten_k_caps_at_rank():
     assert es.whiten(X, k=99).shape == X.shape
 
 
+# --- orthogonalize the criteria (Task 5) ----------------------------------
+
+def test_shared_direction_recovers_common_axis():
+    # axes that all point mostly along one shared direction → first PC recovers it
+    s_true = es._l2([1, 1, 0, 0])
+    rng = np.random.default_rng(1)
+    axes = [3 * s_true + rng.normal(0, 0.05, 4) for _ in range(5)]
+    s = es.shared_direction(axes)
+    assert abs(float(np.dot(s, s_true))) > 0.99
+    assert np.isclose(np.linalg.norm(s), 1.0)
+
+
+def test_shared_direction_sign_points_with_the_bulk():
+    # deterministic sign: aligned with the mean of the axes, not its negation
+    axes = [[1, 0, 0], [0.9, 0.1, 0], [0.8, 0, 0.1]]
+    s = es.shared_direction(axes)
+    assert float(np.mean([np.dot(es._l2(a), s) for a in axes])) > 0
+
+
+def test_orthogonalize_removes_shared_component_and_unit_norms():
+    shared = es._l2([1, 0, 0])
+    o = es.orthogonalize([2.0, 1.0, 0.0], shared)   # x = shared part, y = unique part
+    assert np.isclose(float(np.dot(o, shared)), 0.0)   # shared part partialled out
+    assert np.isclose(np.linalg.norm(o), 1.0)
+
+
+def test_orthogonalized_axes_are_decongested_from_shared_register():
+    # three axes sharing a big common "register" direction + a small unique part;
+    # after orthogonalising against the shared direction none retains it (kills the
+    # cross-criterion topicality halo).
+    shared = es._l2([1, 1, 1, 0, 0])
+    uniques = [es._l2(v) for v in ([0, 0, 0, 1, 0], [0, 0, 0, 0, 1], [0, 0, 0, 1, 1])]
+    axes = [es._l2(2 * shared + 0.2 * u) for u in uniques]
+    s = es.shared_direction(axes)
+    for a in axes:
+        assert abs(float(np.dot(es.orthogonalize(a, s), s))) < 1e-9
+
+
 # --- chunking methods (full / abstract / 8K-overlap) ----------------------
 
 def test_token_windows_short_sequence_is_single_window():
