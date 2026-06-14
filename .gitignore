@@ -219,3 +219,7 @@ __marimo__/
 
 # Downloaded PDFs (large binaries, regenerable via download_pdfs.py)
 pdfs/
+
+# Transient embedding transport artifacts (MySQL is the system of record)
+embed_in.json
+embed_out.json

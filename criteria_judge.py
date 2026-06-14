@@ -207,6 +207,70 @@ def aggregate(paper_verdicts):
     return codes
 
 
+# --- scoring (pure; embedding axis is independent of these verdicts) --------
+
+VERDICT_ORDINAL = {"not_met": 0.0, "unclear": 0.5, "met": 1.0}
+# Verdict picks the band; the embedding score positions within it, so a verdict can
+# never be flipped by topical similarity (met > unclear > not_met always).
+SCORE_BANDS = {"not_met": (0.0, 0.33), "unclear": (0.34, 0.66), "met": (0.67, 1.0)}
+
+
+def verdict_ordinal(verdict):
+    """Map a verdict string to its ordinal score (unknown → 0.5)."""
+    return VERDICT_ORDINAL.get(verdict, 0.5)
+
+
+def combine_score(verdict, e):
+    """Combined per-criterion score in [0,1]: verdict band + embedding spread.
+
+    ``e`` is the contrastive embedding score (≈[-1,1]); it only orders papers
+    *within* the verdict's band. Deferred (plan decision 0): run 1 reports the
+    embedding axis independently rather than merged.
+    """
+    lo, hi = SCORE_BANDS.get(verdict, SCORE_BANDS["unclear"])
+    e_norm = (max(-1.0, min(1.0, float(e))) + 1.0) / 2.0
+    return lo + (hi - lo) * e_norm
+
+
+def weighted_median(values, weights):
+    """Weighted median: the value where cumulative weight first reaches half the
+    total. Reduces to the plain median for equal weights / a single value."""
+    import numpy as np
+
+    values = np.asarray(values, dtype=float)
+    weights = np.asarray(weights, dtype=float)
+    if values.size == 0:
+        return float("nan")
+    order = values.argsort(kind="mergesort")
+    values, weights = values[order], weights[order]
+    cum = np.cumsum(weights)
+    cutoff = weights.sum() / 2.0
+    idx = int(np.searchsorted(cum, cutoff, side="left"))  # first cum >= cutoff
+    # boundary lands exactly atop values[idx] → average with the next (plain-median parity)
+    if idx + 1 < values.size and np.isclose(cum[idx], cutoff):
+        return float((values[idx] + values[idx + 1]) / 2.0)
+    return float(values[min(idx, values.size - 1)])
+
+
+def apply_coherence(criteria):
+    """Annotate a paper's criteria dict with the two_worlds-gated coherence layer.
+
+    Returns ``(annotated, flags)``. ``adaptors``/``arbitrariness`` are marked
+    ``vacuous`` when ``two_worlds`` is firmly not_met (they presuppose two worlds).
+    Logically incoherent patterns are collected in ``flags`` for the triage queue.
+    """
+    tw = criteria.get("two_worlds", {}).get("verdict")
+    flags = []
+    annotated = {k: dict(v) for k, v in criteria.items()}
+    for downstream in ("adaptors", "arbitrariness"):
+        v = annotated.get(downstream, {}).get("verdict")
+        if tw == "not_met":
+            annotated[downstream]["vacuous"] = True
+            if v == "met":  # met adaptor/arbitrariness with no two worlds is incoherent
+                flags.append(f"{downstream}=met but two_worlds=not_met")
+    return annotated, flags
+
+
 # --- resumability ----------------------------------------------------------
 
 def load_done(checkpoint_path):

@@ -93,6 +93,19 @@ def split_sections(text):
     return {k: v for k, v in joined.items() if v or k == "_preamble"}
 
 
+def extract_abstract(text, max_chars=4000):
+    """Return just the abstract as its own document for the abstract-only embedding.
+
+    Uses the recognised ``abstract`` heading; when a paper has no standalone heading
+    (common — title + abstract render as preamble) it falls back to the leading
+    preamble text, which carries the abstract. Capped at ``max_chars`` so a paper with
+    an unbroken ``abstract``→body run (no later heading) doesn't return the whole paper.
+    """
+    sections = split_sections(text)
+    body = sections.get("abstract") or sections.get("_preamble", "")
+    return body[:max_chars]
+
+
 def select_for_budget(text, max_tokens):
     """Return text trimmed to fit ``max_tokens``.
 

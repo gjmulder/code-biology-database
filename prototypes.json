@@ -1,0 +1,55 @@
+{
+  "_README": "Bipolar contrastive prototypes for the Code Biology criteria embedding axis. Each criterion has its OWN theoretical opposite (a distinct axis); negatives are salted in surface form but kept ON that criterion's axis, NOT pooled into a generic 'mere chemistry' blob. adaptors<->arbitrariness are theoretically coupled (adaptor presence is the fingerprint of arbitrariness) so their negative axes legitimately correlate. instruct_* are the harrier query instructions ('Instruct: {task}\\nQuery: {passage}'); paper text is embedded as a document with NO instruction. Edit freely; the pole-separation diagnostic flags muddied poles.",
+  "two_worlds": {
+    "instruct_pos": "Retrieve text arguing that the phenomenon involves two independent worlds of molecules with no necessary physical or chemical link between them",
+    "instruct_neg": "Retrieve text arguing that the phenomenon is a single continuous chemical process in which the molecules are directly and necessarily linked",
+    "pos": [
+      "The system involves two independent worlds of molecules: two distinct sets of objects with no necessary physical or chemical link between them, as codons and amino acids form separate molecular domains.",
+      "Two separate molecular populations exist whose correspondence is not fixed by their chemistry; the sequence of nucleotides and the sequence of amino acids belong to different, mutually independent worlds.",
+      "There are two distinct organic worlds, a world of signs and a world of meanings, that remain chemically independent of one another.",
+      "The two molecular sets are not reducible to each other; each could exist and vary independently of the chemistry of the other."
+    ],
+    "neg": [
+      "The process takes place within a single continuous chemical system; there are not two independent molecular worlds but one set of reactions determined by ordinary thermodynamics.",
+      "The two molecules are directly complementary by physical necessity, so their correspondence is fixed by chemistry and they do not constitute independent worlds.",
+      "The phenomenon is a straightforward physico-chemical interaction reducible to the properties of a single class of molecules.",
+      "One molecular species transforms directly into another along a chemically obligatory pathway, with no second, independent world involved."
+    ]
+  },
+  "adaptors": {
+    "instruct_pos": "Retrieve text arguing that a third class of adaptor molecule physically bridges two independent molecular worlds",
+    "instruct_neg": "Retrieve text arguing that the two molecules interact directly, by catalysis or complementarity, with no mediating adaptor",
+    "pos": [
+      "A third class of molecule, an adaptor such as transfer RNA, physically bridges the two worlds, recognising an object in one world and carrying the corresponding object from the other.",
+      "The mapping is implemented by dedicated adaptor molecules that connect the two independent sets; these adaptors are the molecular fingerprints of the code.",
+      "Bridging molecules stand between the two worlds and establish the correspondence, as aminoacyl-tRNAs link codons to amino acids.",
+      "The link between the two domains is realised by a separate set of mediator molecules rather than by direct contact between the domains themselves."
+    ],
+    "neg": [
+      "The two molecules interact directly through complementary surfaces, with no third mediating adaptor required.",
+      "An enzyme catalyses the transformation of substrate into product; it speeds a chemical reaction rather than acting as an adaptor that maps one world onto another.",
+      "Recognition occurs by direct template complementarity between the two strands, without any intervening bridging molecule.",
+      "Binding is lock-and-key between the partners themselves, so no separate adaptor class mediates the interaction."
+    ]
+  },
+  "arbitrariness": {
+    "instruct_pos": "Retrieve text arguing that the coding rules are arbitrary conventions, compatible with but not dictated by physical law, and could in principle be otherwise",
+    "instruct_neg": "Retrieve text arguing that the correspondence is dictated by stereochemistry, affinity or thermodynamic necessity and could not be otherwise",
+    "pos": [
+      "The coding rules are conventional rather than dictated by physical law: the correspondence is compatible with chemistry but not determined by it, and could in principle have been otherwise.",
+      "The assignment between the two worlds is arbitrary, a natural convention, as shown by the fact that the genetic code could be rewritten without violating any law of chemistry.",
+      "Nothing in the physics of the molecules forces this particular mapping; the rules are fixed by convention and alternative codes are equally possible.",
+      "The relationship is not determined by molecular affinity; it is a historically frozen convention that could vary."
+    ],
+    "neg": [
+      "The specificity is dictated by stereochemistry: the pairing is fixed for steric reasons and could not be otherwise.",
+      "The correspondence follows necessarily from thermodynamics and molecular structure, so the rules are determined by chemistry rather than chosen.",
+      "Lock-and-key complementarity makes the interaction obligatory; the outcome is physically determined, not conventional.",
+      "The mapping is a direct consequence of chemical affinity and binding energy, leaving no freedom for alternative assignments."
+    ]
+  },
+  "_controls": {
+    "genetic_code_positive": "In the genetic code, codons and amino acids are two independent molecular worlds bridged by transfer-RNA adaptors, and the assignment of codons to amino acids is an arbitrary convention that could be otherwise without breaking any law of chemistry.",
+    "deterministic_chemistry_negative": "Enzyme specificity arises from stereochemical lock-and-key complementarity: the substrate binds the active site for steric and thermodynamic reasons, the reaction is a direct chemical transformation, and the outcome is physically determined rather than conventional."
+  }
+}

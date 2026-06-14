@@ -122,6 +122,77 @@ pages, 31 PDFs). Key content:
   plus calls for papers, programmes, and `conferences/pdf/` abstracts/papers.
 - **`videos.html`, `photogalleries.html`, `Immagini/`** — media archive.
 
+## Criteria Scoring — embeddings as an independent axis
+A separate analysis scores how strongly each paper's text *argues* the three
+criteria (`two_worlds`, `adaptors`, `arbitrariness`), to complement the categorical
+LLM verdicts from `criteria_judge.py`. The LLM `confidence` is saturated (0.9–1.0)
+and carries no gradation, so a **corpus-contrastive embedding** supplies the
+continuous signal: `e = cos(paper, POS_prototype) − cos(paper, NEG_prototype)`, with
+register-matched negative poles so shared "code biology" vocabulary cancels.
+
+**Decision 0 (load-bearing):** the embedding axis is **independent** — reported
+side-by-side with the verdicts, never overriding, gating, or band-merging them. The
+verdict stays the categorical backbone.
+
+### Pipeline
+- **`embed_score.py`** — pure scoring math (poles, contrastive score, `token_windows`,
+  `aggregate_chunks`). Fully unit-tested offline.
+- **`pdf_text.py`** — adds `extract_abstract()` (abstract heading, preamble fallback).
+- **`run_harrier_embed.py`** — runs **on asushimu's 3090 Ti**. Loads
+  `microsoft/harrier-oss-v1-27b` (Gemma3-27B decoder-only embedder, 5376-dim, MIT)
+  via sentence-transformers in **4-bit** (bitsandbytes nf4, bf16 compute, ≈13.5 GB).
+- **`embed_independent.py`** — driver on this host: extracts paper text → ships
+  input + runner to asushimu over SSH → runs pinned to the 3090 Ti → loads results
+  to MySQL → generates `report.md` from the DB.
+
+### Three chunking methods (each fed as separate documents)
+Each paper is embedded **three ways** to test which granularity best tracks the
+verdict, surfaced as three columns (`e_full` / `e_abstract` / `e_chunk`) in
+`report.md` + a `PER-PAPER VERDICTS` table with the verdict and its confidence:
+- **full** — the whole (char-budget-capped) paper as one document.
+- **abstract** — the abstract section only.
+- **chunk** — 8192-token windows at 50% overlap (stride 4096), scored per window then
+  **max-pooled** (strongest evidence anywhere).
+
+### MySQL is the system of record (not JSON)
+All embedding output is stored in **MySQL on asushimu** (conda mysqld, data dir
+`asushimu:/nvme/mysql/data`, DB `codebiology`), **not** JSON. `db.py` owns the schema;
+the main table `embedding_scores` has **`code_number` as the leading primary-key
+column**, one row per `(code_number, pdf_path, method, criterion)`. The GPU host
+returns a transient `embed_out.json` purely as transport — the driver loads it into
+MySQL and deletes it. `report.md` is regenerated from the DB (`--report-only`).
+Connection params live in gitignored `.env` (`DB_HOST/PORT/NAME/USER/PASS`); never commit it.
+
+### Critical environment assumptions (hard-won)
+- **GPU pinning:** the 3090 Ti is **GPU index 2** under
+  `CUDA_DEVICE_ORDER=PCI_BUS_ID`. The two GTX 1080 Tis are sm_61, **unsupported** by
+  torch 2.8 — always run with `CUDA_VISIBLE_DEVICES=2`.
+- **VRAM ceiling → token cap:** a **32k-token forward pass OOMs** 27B/4-bit on the
+  24 GB card (a 115k-char paper at 32k tokens fails; ~23k tokens used 20.8 GB).
+  The `full`/`abstract` methods are therefore capped at **`--max-seq 16384`**, and the
+  run sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` + `torch.cuda.empty_cache()`
+  per doc. `full` thus embeds the first ~16k tokens of long papers; `chunk` gives full
+  coverage. The 8192-token chunk windows are proven to fit.
+- **Dependency pins on asushimu:** `peft>=0.11` (the bundled `0.4.0.dev0` lacks
+  `PeftModelForFeatureExtraction` that ST 5.x imports), `numpy<2` (ABI), `pyarrow<17`.
+- **Run logging:** each run logs total embeds per method up front, then per doc a
+  stable `id=<pdf-stem>`, `[doc i/N]`, and a running `done/total` per method.
+
+### Findings (10-paper run, 2026-06-14)
+- Controls behave (validity check passes): genetic-code reads positive on all three
+  criteria; deterministic-chemistry reads negative on all three and **most negative on
+  `arbitrariness`**. The lone `met` paper (code 428) tops every method on `two_worlds`
+  and `adaptors` → embedding doesn't contradict the verdict (Spearman ρ ≈ +0.52).
+- **full ≈ abstract ≈ chunk** (identical ρ, near-identical magnitudes) — abstract-only
+  is as informative as full text on this sample.
+- Caveat: absolute `e` is small (±0.05) and pole-pair cosines are high (poles partly
+  overlap) — fine for ranking/triage, widen poles before trusting magnitudes.
+
+### ⚠️ Deferred revert (PROJECT END)
+The production `llama-server` (Home Assistant voice agent) is **OFFLINE** — the
+3090 Ti was freed for embedding. Restore **at project end only**:
+`cp ~/start_llama.prod.bak ~/start_llama.sh && sudo systemctl restart llama-server`.
+
 ## AI Goals & Responsibilities
 - **Primary Task:** Parse the CSV to process the codes and their associated citations.
 - **Specific Extraction:** For every code, parse the references to isolate the **paper name** and map it directly to its corresponding **hyperlink/URL**.
@@ -136,5 +207,5 @@ pages, 31 PDFs). Key content:
 ## Code development rules
 1. **Testing:** For any new functionality or changes to existing functionality always write or expand code using TDD. Write a failing test first, then the feature or change
 2. **Language** Always write in pythonic readable python and prefer numpy for data management
-3. **Logging** Always use paython logging and choose DEBUG, INFO, levels suitably depending on criticality and informationality of the code
+3. **Logging** Always use pythonic logging and choose DEBUG, INFO, levels suitably depending on criticality and informationality of the code
 4. **Commit cadence** Pause and commit after each completed task (one logical unit of work). Keep commits small and self-contained; do not batch multiple tasks into one commit.
