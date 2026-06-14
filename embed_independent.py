@@ -132,6 +132,45 @@ def run_remote(host, remote_dir, in_path, out_path, model, use_4bit, cuda_device
     subprocess.run(["ssh", host, f"rm -f {remote_dir}/embed_out.json"], check=False)
 
 
+def run_remote_gte(host, remote_dir, in_path, out_path, endpoint, max_seq,
+                   chunk_size, chunk_overlap, controls_only=False):
+    """gte variant of :func:`run_remote`: embed over a llama-server ``/v1/embeddings``
+    endpoint instead of loading a model in-process.
+
+    Ships ``run_gte_embed.py`` plus the helpers it imports (``run_harrier_embed.py``,
+    ``embed_score.py``) and the input, runs the gte runner against ``endpoint`` on the GPU
+    host (the transient ``start_llama_embed.sh`` server must already be up), then fetches
+    the transient ``embed_out.json``. No CUDA env: this process only makes HTTP calls — the
+    server owns the GPU."""
+    subprocess.run(["ssh", host, f"mkdir -p {remote_dir}"], check=True)
+    for f in ("embed_score.py", "run_harrier_embed.py", "run_gte_embed.py", in_path):
+        subprocess.run(["scp", "-q", f, f"{host}:{remote_dir}/"], check=True)
+    co = "--controls-only" if controls_only else ""
+    cmd = (f"cd {remote_dir} && python3 run_gte_embed.py --endpoint {endpoint} "
+           f"--in {os.path.basename(in_path)} --out embed_out.json "
+           f"--max-seq {max_seq} --chunk-size {chunk_size} "
+           f"--chunk-overlap {chunk_overlap} {co}")
+    log.info("remote (gte): %s", cmd)
+    subprocess.run(["ssh", host, cmd], check=True)
+    subprocess.run(["scp", "-q", f"{host}:{remote_dir}/embed_out.json", out_path],
+                   check=True)
+    subprocess.run(["ssh", host, f"rm -f {remote_dir}/embed_out.json"], check=False)
+
+
+def run_embed_remote(args, in_path, out_path, controls_only=False):
+    """Dispatch the remote embed to the engine chosen by ``--engine``: ``st`` =
+    harrier/sentence-transformers (loads the model in-process), ``llamacpp`` = gte over a
+    llama-server endpoint. Keeps both call sites in ``main`` engine-agnostic."""
+    if args.engine == "llamacpp":
+        run_remote_gte(args.host, args.remote_dir, in_path, out_path, args.endpoint,
+                       max_seq=args.max_seq, chunk_size=args.chunk_size,
+                       chunk_overlap=args.chunk_overlap, controls_only=controls_only)
+    else:
+        run_remote(args.host, args.remote_dir, in_path, out_path, args.model,
+                   use_4bit=not args.no_4bit, cuda_devices=args.cuda_devices,
+                   max_seq=args.max_seq, controls_only=controls_only)
+
+
 # --- average-rank Spearman (no scipy dependency) ---------------------------
 
 def _rankdata(a):
@@ -362,6 +401,17 @@ def main():
     ap.add_argument("--model", default="/data/vllm/harrier-oss-v1-27b")
     ap.add_argument("--cuda-devices", default="2",
                     help="CUDA_VISIBLE_DEVICES on the GPU host (PCI order); 2 = 3090 Ti")
+    ap.add_argument("--engine", choices=["st", "llamacpp"], default="st",
+                    help="embedding engine: 'st' = harrier via sentence-transformers "
+                         "(in-process, 4-bit); 'llamacpp' = gte-Qwen2 GGUF over a "
+                         "llama-server /v1/embeddings endpoint (start_llama_embed.sh). "
+                         "Pair 'llamacpp' with --run gte-qwen2.")
+    ap.add_argument("--endpoint", default="http://localhost:11600",
+                    help="llama-server base URL for --engine llamacpp (gte /v1/embeddings)")
+    ap.add_argument("--chunk-size", type=int, default=4096,
+                    help="chunk-method window size (tokens) for --engine llamacpp")
+    ap.add_argument("--chunk-overlap", type=int, default=2048,
+                    help="chunk-method window overlap (tokens) for --engine llamacpp")
     ap.add_argument("--in", dest="in_path", default="embed_in.json")
     ap.add_argument("--run", default="baseline",
                     help="embedding-run label scoping every DB read/write (rows coexist "
@@ -421,9 +471,7 @@ def main():
         with open(args.in_path, "w", encoding="utf-8") as f:
             json.dump(payload, f)
         out_tmp = "embed_out.json"
-        run_remote(args.host, args.remote_dir, args.in_path, out_tmp, args.model,
-                   use_4bit=not args.no_4bit, cuda_devices=args.cuda_devices,
-                   max_seq=args.max_seq, controls_only=True)
+        run_embed_remote(args, args.in_path, out_tmp, controls_only=True)
         with open(out_tmp, encoding="utf-8") as f:
             out = json.load(f)
         run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -469,9 +517,7 @@ def main():
         json.dump(payload, f)
 
     out_tmp = "embed_out.json"   # transient transport only — deleted after DB load
-    run_remote(args.host, args.remote_dir, args.in_path, out_tmp,
-               args.model, use_4bit=not args.no_4bit, cuda_devices=args.cuda_devices,
-               max_seq=args.max_seq)
+    run_embed_remote(args, args.in_path, out_tmp)
     with open(out_tmp, encoding="utf-8") as f:
         out = json.load(f)
 

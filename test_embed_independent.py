@@ -87,6 +87,62 @@ def test_run_remote_default_omits_controls_only(monkeypatch, tmp_path):
     assert "--controls-only" not in remote_cmd[-1]
 
 
+def test_run_remote_gte_scps_runner_and_runs_against_endpoint(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(ei.subprocess, "run",
+                        lambda cmd, check=True, **kw: calls.append(cmd) or type("R", (), {"returncode": 0})())
+    monkeypatch.chdir(tmp_path)
+    # gte runner imports the harrier helpers, so both must be shipped alongside embed_score
+    for f in ("embed_score.py", "run_harrier_embed.py", "run_gte_embed.py", "in.json"):
+        (tmp_path / f).write_text("")
+    ei.run_remote_gte("host", "/remote", "in.json", "out.json",
+                      "http://localhost:11600", max_seq=16384,
+                      chunk_size=4096, chunk_overlap=2048)
+    scped = [c[2] for c in calls if c[:2] == ["scp", "-q"]]
+    assert {"embed_score.py", "run_harrier_embed.py", "run_gte_embed.py", "in.json"} <= set(scped)
+    remote_cmd = next(c for c in calls if c[:2] == ["ssh", "host"]
+                      and "run_gte_embed.py" in c[-1])
+    assert "--endpoint http://localhost:11600" in remote_cmd[-1]
+    assert "--controls-only" not in remote_cmd[-1]
+
+
+def test_run_remote_gte_controls_only_appends_flag(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(ei.subprocess, "run",
+                        lambda cmd, check=True, **kw: calls.append(cmd) or type("R", (), {"returncode": 0})())
+    monkeypatch.chdir(tmp_path)
+    for f in ("embed_score.py", "run_harrier_embed.py", "run_gte_embed.py", "in.json"):
+        (tmp_path / f).write_text("")
+    ei.run_remote_gte("host", "/remote", "in.json", "out.json",
+                      "http://localhost:11600", max_seq=16384,
+                      chunk_size=4096, chunk_overlap=2048, controls_only=True)
+    remote_cmd = next(c for c in calls if c[:2] == ["ssh", "host"]
+                      and "run_gte_embed.py" in c[-1])
+    assert "--controls-only" in remote_cmd[-1]
+
+
+def test_run_embed_remote_dispatches_on_engine(monkeypatch):
+    # the dispatcher routes --engine st -> harrier runner, llamacpp -> gte runner
+    seen = {}
+    monkeypatch.setattr(ei, "run_remote",
+                        lambda *a, **k: seen.update(which="st", kw=k))
+    monkeypatch.setattr(ei, "run_remote_gte",
+                        lambda *a, **k: seen.update(which="gte", kw=k))
+
+    class A:
+        host = "h"; remote_dir = "/r"; model = "m"; no_4bit = False
+        cuda_devices = "2"; max_seq = 16384; endpoint = "http://localhost:11600"
+        chunk_size = 4096; chunk_overlap = 2048
+
+    a = A()
+    a.engine = "st"
+    ei.run_embed_remote(a, "in.json", "out.json")
+    assert seen["which"] == "st"
+    a.engine = "llamacpp"
+    ei.run_embed_remote(a, "in.json", "out.json", controls_only=True)
+    assert seen["which"] == "gte" and seen["kw"]["controls_only"] is True
+
+
 def test_report_from_db_threads_run_to_fetch_report(monkeypatch):
     # report_from_db must read the embedding columns for the requested run, so a gte pass
     # reports gte vectors (not baseline). Capture the run passed to db.fetch_report.
