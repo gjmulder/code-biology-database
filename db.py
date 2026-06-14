@@ -316,9 +316,25 @@ def fetch_control_vectors(conn):
         return {name: unpack_vec(blob) for name, blob in c.fetchall()}
 
 
-def apply_recompute(conn, scores, codes, within, params, run_ts):
+def delete_score_rows(conn, pids):
+    """Delete ``embedding_scores`` rows for the given ``pdf_path``s.
+
+    Used to evict in-corpus self-reference documents (dropped from the recompute corpus)
+    so they vanish from the regenerated report rather than lingering with stale pre-lever
+    scores. No-op for an empty list."""
+    if not pids:
+        return
+    with conn.cursor() as c:
+        c.executemany("DELETE FROM embedding_scores WHERE pdf_path=%s",
+                      [(p,) for p in pids])
+    conn.commit()
+
+
+def apply_recompute(conn, scores, codes, within, params, run_ts, control_scores=None):
     """Persist an offline recompute: upsert the leverred ``e`` (verdict/confidence
-    untouched), the centred pole widths, and the lever params into ``run_meta``."""
+    untouched), the centred pole widths, the lever params into ``run_meta``, and — when
+    ``control_scores`` is given — the leverred control ``e`` (so the report's control
+    checks reflect the same geometry as the papers)."""
     init_schema(conn)
     with conn.cursor() as c:
         c.executemany(
@@ -335,6 +351,14 @@ def apply_recompute(conn, scores, codes, within, params, run_ts):
             "INSERT INTO run_meta (k,v) VALUES (%s,%s) AS new "
             "ON DUPLICATE KEY UPDATE v=new.v",
             [(k, str(v)) for k, v in params.items()])
+        if control_scores:
+            c.executemany(
+                "INSERT INTO control_scores (name,criterion,e,run_ts) "
+                "VALUES (%s,%s,%s,%s) AS new "
+                "ON DUPLICATE KEY UPDATE e=new.e, run_ts=new.run_ts",
+                [(name, crit, float(e), run_ts)
+                 for name, cdict in control_scores.items()
+                 for crit, e in cdict.items()])
     conn.commit()
 
 

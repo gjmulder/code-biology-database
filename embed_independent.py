@@ -271,11 +271,17 @@ def report_from_db(conn, md_path, csv_path):
     ctrl = payload["controls"]
     if ctrl:
         md.append("## Control checks\n")
-        if meta.get("scoring") == "leverred-axis":
+        leverred = meta.get("scoring") == "leverred-axis"
+        controls_leverred = meta.get("controls_scoring") == "leverred-axis"
+        if leverred and not controls_leverred:
             md.append("> ⚠️ These control scores are the **prior contrastive** values — "
                       "control document vectors are not persisted, so the offline "
                       "recompute cannot re-score them with the levers. Re-embed with "
                       "control-vector capture to refresh them.\n")
+        elif controls_leverred:
+            md.append("> Scored through the same corpus geometry (μ / whitening / "
+                      "decongested axes) as the papers — directly comparable to the "
+                      "per-paper `e`.\n")
         md.append("genetic-code control should read high on all three; "
                   "deterministic-chemistry should read low on `arbitrariness`.\n")
         crows = [[name] + [_fmt(sc.get(c)) for c in CRITERIA]
@@ -299,16 +305,38 @@ def report_from_db(conn, md_path, csv_path):
 def recompute_from_db(conn, md_path, csv_path, k, strength):
     """Offline rescore (no GPU): load persisted vectors, apply all four levers, write the
     leverred ``e`` + centred pole widths back to MySQL, regenerate the report."""
+    db.init_schema(conn)
     doc_vecs, poles, codes = db.fetch_vectors(conn)
     if not doc_vecs or not poles:
         log.warning("no persisted vectors in MySQL — run the GPU embed first; nothing to "
                     "recompute")
         return
+    # Drop in-corpus Code Biology self-references (conference/society pages mirrored under
+    # codebiology.org): the poles are mined from that same corpus, so they read maximally
+    # in-register and leak to the top of every criterion. Evict their stale score rows too.
+    doc_vecs, dropped = es_mod.drop_self_references(doc_vecs)
+    if dropped:
+        db.delete_score_rows(conn, dropped)
+        log.info("dropped %d in-corpus self-reference doc(s) from the corpus: %s",
+                 len(dropped), dropped)
     scores, within = es_mod.recompute(doc_vecs, poles, k=k, strength=strength)
     run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    db.apply_recompute(conn, scores, codes, within,
-                       {"whiten_k": k, "shared_strength": strength,
-                        "scoring": "leverred-axis"}, run_ts)
+
+    # Score the controls through the SAME corpus geometry as the papers (leverred), if the
+    # structural embed captured their raw vectors; otherwise the report keeps the pre-lever
+    # contrastive numbers and flags them.
+    control_vecs = db.fetch_control_vectors(conn)
+    control_scores = None
+    params = {"whiten_k": k, "shared_strength": strength, "scoring": "leverred-axis"}
+    if control_vecs:
+        control_scores = es_mod.score_controls(control_vecs, doc_vecs, poles,
+                                               k=k, strength=strength)
+        params["controls_scoring"] = "leverred-axis"
+        log.info("rescored %d control(s) with the corpus geometry (leverred)",
+                 len(control_scores))
+
+    db.apply_recompute(conn, scores, codes, within, params, run_ts,
+                       control_scores=control_scores)
     n_methods = len(next(iter(scores.values())))
     log.info("recomputed %d papers x %d methods (k=%d, strength=%.2f) from vectors; "
              "no GPU. within=%s", len(scores), n_methods, k, strength,

@@ -184,10 +184,14 @@ def main():
              progress["done"]["abstract"], total["abstract"],
              progress["done"]["chunk"], total["chunk"])
 
-    control_scores = {}
+    control_scores, control_vectors = {}, {}
     if controls:
         for name, text in controls.items():
-            control_scores[name] = _crit_scores(encode([text])[0], poles)
+            cv = encode([text])[0]
+            control_scores[name] = _crit_scores(cv, poles)
+            # keep the raw control vector too, so the driver can rescore the controls
+            # offline through the same corpus geometry as the papers (leverred controls).
+            control_vectors[name] = cv.tolist()
 
     # Raw vectors travel as plain float lists; the driver packs them to float32 BLOBs
     # in MySQL so the contrast math can be recomputed offline (no GPU re-embed).
@@ -199,6 +203,7 @@ def main():
         "pole_vectors": pole_vectors,
         "pole_separation": embed_score.pole_separation(poles),
         "controls": control_scores,
+        "control_vectors": control_vectors,
         "model": args.model,
         "dim": int(model.get_sentence_embedding_dimension()),
         "use_4bit": not args.no_4bit,
