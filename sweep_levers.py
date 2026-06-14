@@ -142,21 +142,25 @@ def main():
                     help="whiten-k grid (top-PCs removed; 0 = whitening off)")
     ap.add_argument("--strengths", type=float, nargs="+", default=DEFAULT_STRENGTHS,
                     help="shared-strength grid (axis orthogonalization, [0,1])")
+    ap.add_argument("--run", default="baseline",
+                    help="embedding-run label to sweep ('baseline' = harrier, "
+                         "'gte-qwen2' = the model swap); verdicts are shared across runs")
     args = ap.parse_args()
 
     import db
     conn = db.connect()
     try:
-        doc_vecs, poles, _codes = db.fetch_vectors(conn)
+        doc_vecs, poles, _codes = db.fetch_vectors(conn, args.run)
         if not doc_vecs or not poles:
-            log.warning("no persisted vectors in MySQL — run the GPU embed first")
+            log.warning("no persisted vectors in MySQL for run=%s — run the GPU embed first",
+                        args.run)
             return
         # Match the live recompute corpus exactly: drop in-corpus self-references so the
         # sweep ρ is directly comparable to CLAUDE.md §5 / report.md.
         doc_vecs, dropped = es.drop_self_references(doc_vecs)
         if dropped:
             log.info("dropped %d in-corpus self-reference doc(s): %s", len(dropped), dropped)
-        payload = db.fetch_report(conn)
+        payload = db.fetch_report(conn, args.run)
     finally:
         conn.close()
 

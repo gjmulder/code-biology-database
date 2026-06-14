@@ -87,6 +87,38 @@ def test_run_remote_default_omits_controls_only(monkeypatch, tmp_path):
     assert "--controls-only" not in remote_cmd[-1]
 
 
+def test_report_from_db_threads_run_to_fetch_report(monkeypatch):
+    # report_from_db must read the embedding columns for the requested run, so a gte pass
+    # reports gte vectors (not baseline). Capture the run passed to db.fetch_report.
+    seen = {}
+
+    def fake_fetch_report(conn, run="baseline"):
+        seen["run"] = run
+        return {"papers": {}, "order": [], "meta": {},
+                "pole_separation": {}, "controls": {}}
+
+    monkeypatch.setattr(ei.db, "fetch_report", fake_fetch_report)
+    ei.report_from_db(None, "/dev/null", "/dev/null", run="gte-qwen2")
+    assert seen["run"] == "gte-qwen2"
+
+
+def test_recompute_from_db_threads_run_through(monkeypatch):
+    # recompute_from_db must scope every vector read/write to the requested run so the
+    # offline rescore targets one model's vectors. Capture the run on each db call.
+    seen = {}
+    monkeypatch.setattr(ei.db, "init_schema", lambda conn: None)
+
+    def fake_fetch_vectors(conn, run="baseline"):
+        seen["fetch_vectors"] = run
+        return {}, {}, {}      # empty -> recompute returns early after the read
+
+    monkeypatch.setattr(ei.db, "fetch_vectors", fake_fetch_vectors)
+    # empty vectors -> recompute_from_db returns early after fetch_vectors; that's enough
+    # to prove the run is threaded to the read path.
+    ei.recompute_from_db(None, "/dev/null", "/dev/null", k=0, strength=0.5, run="gte-qwen2")
+    assert seen["fetch_vectors"] == "gte-qwen2"
+
+
 def test_build_pool_keeps_only_on_disk_and_dedupes(tmp_path, monkeypatch):
     # two rows share a DOI (same pdf path); a third has no file on disk
     rows = [

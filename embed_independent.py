@@ -171,9 +171,10 @@ def _fmt(x):
     return "" if x is None else f"{x:+.3f}"
 
 
-def report_from_db(conn, md_path, csv_path):
-    """Generate report.md + a flat CSV entirely from the MySQL tables."""
-    payload = db.fetch_report(conn)
+def report_from_db(conn, md_path, csv_path, run="baseline"):
+    """Generate report.md + a flat CSV entirely from the MySQL tables, for one
+    embedding ``run`` (baseline=harrier, gte-qwen2=the model swap)."""
+    payload = db.fetch_report(conn, run)
     papers, order = payload["papers"], payload["order"]
     meta = payload["meta"]
     methods = [m for m in METHODS
@@ -309,21 +310,22 @@ def report_from_db(conn, md_path, csv_path):
     print(f"\nwrote {md_path} and {csv_path} ({len(order)} papers) from MySQL")
 
 
-def recompute_from_db(conn, md_path, csv_path, k, strength):
+def recompute_from_db(conn, md_path, csv_path, k, strength, run="baseline"):
     """Offline rescore (no GPU): load persisted vectors, apply all four levers, write the
-    leverred ``e`` + centred pole widths back to MySQL, regenerate the report."""
+    leverred ``e`` + centred pole widths back to MySQL, regenerate the report — all scoped
+    to one embedding ``run``."""
     db.init_schema(conn)
-    doc_vecs, poles, codes = db.fetch_vectors(conn)
+    doc_vecs, poles, codes = db.fetch_vectors(conn, run)
     if not doc_vecs or not poles:
-        log.warning("no persisted vectors in MySQL — run the GPU embed first; nothing to "
-                    "recompute")
+        log.warning("no persisted vectors in MySQL for run=%s — run the GPU embed first; "
+                    "nothing to recompute", run)
         return
     # Drop in-corpus Code Biology self-references (conference/society pages mirrored under
     # codebiology.org): the poles are mined from that same corpus, so they read maximally
     # in-register and leak to the top of every criterion. Evict their stale score rows too.
     doc_vecs, dropped = es_mod.drop_self_references(doc_vecs)
     if dropped:
-        db.delete_score_rows(conn, dropped)
+        db.delete_score_rows(conn, dropped, run)
         log.info("dropped %d in-corpus self-reference doc(s) from the corpus: %s",
                  len(dropped), dropped)
     scores, within = es_mod.recompute(doc_vecs, poles, k=k, strength=strength)
@@ -332,7 +334,7 @@ def recompute_from_db(conn, md_path, csv_path, k, strength):
     # Score the controls through the SAME corpus geometry as the papers (leverred), if the
     # structural embed captured their raw vectors; otherwise the report keeps the pre-lever
     # contrastive numbers and flags them.
-    control_vecs = db.fetch_control_vectors(conn)
+    control_vecs = db.fetch_control_vectors(conn, run)
     control_scores = None
     params = {"whiten_k": k, "shared_strength": strength, "scoring": "leverred-axis"}
     if control_vecs:
@@ -343,12 +345,12 @@ def recompute_from_db(conn, md_path, csv_path, k, strength):
                  len(control_scores))
 
     db.apply_recompute(conn, scores, codes, within, params, run_ts,
-                       control_scores=control_scores)
+                       control_scores=control_scores, run=run)
     n_methods = len(next(iter(scores.values())))
     log.info("recomputed %d papers x %d methods (k=%d, strength=%.2f) from vectors; "
              "no GPU. within=%s", len(scores), n_methods, k, strength,
              {c: round(v, 3) for c, v in within.items()})
-    report_from_db(conn, md_path, csv_path)
+    report_from_db(conn, md_path, csv_path, run)
 
 
 def main():
@@ -361,6 +363,10 @@ def main():
     ap.add_argument("--cuda-devices", default="2",
                     help="CUDA_VISIBLE_DEVICES on the GPU host (PCI order); 2 = 3090 Ti")
     ap.add_argument("--in", dest="in_path", default="embed_in.json")
+    ap.add_argument("--run", default="baseline",
+                    help="embedding-run label scoping every DB read/write (rows coexist "
+                         "non-destructively): 'baseline' = harrier, 'gte-qwen2' = the model "
+                         "swap. Verdicts are run-agnostic (shared `verdicts` table).")
     ap.add_argument("--csv", default="embedding_scores.csv")
     ap.add_argument("--md", default="report.md")
     ap.add_argument("--char-budget", type=int, default=120000)
@@ -399,7 +405,8 @@ def main():
     if args.recompute:
         conn = db.connect()
         try:
-            recompute_from_db(conn, args.md, args.csv, args.whiten_k, args.shared_strength)
+            recompute_from_db(conn, args.md, args.csv, args.whiten_k, args.shared_strength,
+                              run=args.run)
         finally:
             conn.close()
         return
@@ -422,11 +429,12 @@ def main():
         run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         conn = db.connect()
         try:
-            db.store(conn, out, [], run_ts)   # upserts control_vectors only (no papers)
+            db.store(conn, out, [], run_ts, run=args.run)  # control_vectors only (no papers)
             log.info("stored %d control vector(s) to MySQL",
                      len(out.get("control_vectors", {})))
             # now rescore the controls through the corpus geometry + regenerate the report
-            recompute_from_db(conn, args.md, args.csv, args.whiten_k, args.shared_strength)
+            recompute_from_db(conn, args.md, args.csv, args.whiten_k, args.shared_strength,
+                              run=args.run)
         finally:
             conn.close()
         os.remove(out_tmp)
@@ -435,7 +443,7 @@ def main():
     if args.report_only:
         conn = db.connect()
         try:
-            report_from_db(conn, args.md, args.csv)
+            report_from_db(conn, args.md, args.csv, run=args.run)
         finally:
             conn.close()
         return
@@ -470,10 +478,10 @@ def main():
     run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn = db.connect()
     try:
-        db.store(conn, out, recs, run_ts)
-        log.info("stored %d papers x %d methods to MySQL (codebiology.embedding_scores)",
-                 len(out["scores"]), len(out.get("methods", METHODS)))
-        report_from_db(conn, args.md, args.csv)
+        db.store(conn, out, recs, run_ts, run=args.run)
+        log.info("stored %d papers x %d methods to MySQL (run=%s)",
+                 len(out["scores"]), len(out.get("methods", METHODS)), args.run)
+        report_from_db(conn, args.md, args.csv, run=args.run)
     finally:
         conn.close()
     os.remove(out_tmp)   # MySQL is the store, not JSON
