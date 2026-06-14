@@ -81,6 +81,35 @@ def score_papers(doc_vecs, poles):
             for pid, v in doc_vecs.items()}
 
 
+def corpus_mean(vectors):
+    """Arithmetic mean of a set of document vectors — the centring origin μ."""
+    return np.asarray(vectors, dtype=np.float64).mean(axis=0)
+
+
+def center(vec, mu):
+    """Subtract the corpus mean μ (broadcasts over rows for a 2-D ``vec``)."""
+    return np.asarray(vec, dtype=np.float64) - np.asarray(mu, dtype=np.float64)
+
+
+def whiten(vecs, k):
+    """Remove the top-``k`` principal components ('all-but-the-top') from a set of
+    (already centred) vectors.
+
+    ``k == 0`` is the identity. Decoder-only, last-token-pooled embeddings sit in a
+    narrow cone: a few dominant shared directions carry most of the variance, so every
+    in-register cosine is high and the criterion axes are compressed. Projecting out the
+    top-``k`` PCs strips that common-component anisotropy and restores dynamic range.
+    ``k`` is capped at the available rank so over-asking never raises."""
+    X = np.asarray(vecs, dtype=np.float64)
+    k = min(k, *X.shape)
+    if k <= 0:
+        return X
+    # right singular vectors of the centred row set = its principal axes
+    _, _, Vt = np.linalg.svd(X, full_matrices=False)
+    top = Vt[:k]                       # (k, dim)
+    return X - (X @ top.T) @ top       # project the top-k subspace out
+
+
 def axis_vector(pole):
     """Unit difference axis pointing from the negative toward the positive pole.
 

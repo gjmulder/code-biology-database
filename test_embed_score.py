@@ -131,6 +131,44 @@ def test_axis_score_degenerate_poles_are_zero():
     assert es.axis_score([0.5, 0.5, 0.7], pole) == 0.0
 
 
+# --- centre / whiten the space (Task 4) -----------------------------------
+
+def test_corpus_mean_is_arithmetic_mean():
+    mu = es.corpus_mean([[1, 0], [3, 0], [2, 6]])
+    assert np.allclose(mu, [2, 2])
+
+
+def test_center_removes_common_offset_1d_and_2d():
+    assert np.allclose(es.center([3, 4], [2, 3]), [1, 1])
+    centred = es.center([[1, 2], [3, 4]], [2, 3])
+    assert np.allclose(centred, [[-1, -1], [1, 1]])
+    assert np.allclose(centred.mean(axis=0), 0)   # offset gone
+
+
+def test_whiten_k0_is_identity():
+    X = np.array([[1.0, 2, 3], [4, 5, 6], [7, 8, 9]])
+    assert np.allclose(es.whiten(X, 0), X)
+
+
+def test_whiten_removes_dominant_shared_direction():
+    # a large shared-variance direction (axis 0) plus tiny per-sample signal (axis 1)
+    rng = np.random.default_rng(0)
+    n = 60
+    X = np.stack([rng.normal(0, 10, n),      # dominant anisotropic direction
+                  rng.normal(0, 0.1, n),     # the faint real signal
+                  np.zeros(n)], axis=1)
+    X = X - X.mean(axis=0)
+    W = es.whiten(X, k=1)
+    assert np.var(W[:, 0]) < 1e-6 * np.var(X[:, 0])   # dominant direction killed
+    assert np.var(W[:, 1]) > 0.5 * np.var(X[:, 1])    # faint signal preserved
+
+
+def test_whiten_k_caps_at_rank():
+    # asking to remove more PCs than exist must not raise; result is well-defined
+    X = np.array([[1.0, 0, 0], [0, 1, 0]])
+    assert es.whiten(X, k=99).shape == X.shape
+
+
 # --- chunking methods (full / abstract / 8K-overlap) ----------------------
 
 def test_token_windows_short_sequence_is_single_window():
