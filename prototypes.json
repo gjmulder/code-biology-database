@@ -1,22 +1,22 @@
 {
-  "_README": "Bipolar contrastive prototypes for the Code Biology criteria embedding axis. Each criterion has its OWN theoretical opposite (a distinct axis); negatives are salted in surface form but kept ON that criterion's axis, NOT pooled into a generic 'mere chemistry' blob. adaptors<->arbitrariness are theoretically coupled (adaptor presence is the fingerprint of arbitrariness) so their negative axes legitimately correlate. instruct_* are the harrier query instructions ('Instruct: {task}\\nQuery: {passage}'); paper text is embedded as a document with NO instruction. WIDENED 2026-06-14: 6 passages/pole, sharpened toward the extremes to open the within-criterion pos<->neg angle (see pole_separation['within']) so e-magnitudes carry signal, not just rank. Edit freely; the within-criterion pole-width diagnostic flags narrow/overlapping poles.",
+  "_README": "Bipolar contrastive prototypes for the Code Biology criteria embedding axis. CORPUS-MINED 2026-06-14 (Task 2): positives are now authentic in-distribution sentences lifted from the field's own canonical definition — www.codebiology.org/index.html (the three-criteria proof + genetic-code example) and glossary.html (Arbitrariness, protein-synthesis entries) — lightly cleaned (inline citations removed, line-break hyphenation joined). Negatives are register-matched from the SAME corpus where it states the opposing 'chemistry determines everything' position it argues against — the chemical paradigm ('Life is chemistry'), spontaneous-assembly determinism, and the Stereochemical theory (codons<->amino acids 'determined by chemistry'). Where the corpus gives no clean per-criterion negation (notably the two_worlds and adaptors negatives) a few register-matched paraphrases from the prior hand-written set are RETAINED; these are the trailing entries in each neg list. Each criterion keeps its OWN theoretical opposite (a distinct axis); negatives are NOT pooled into a generic 'mere chemistry' blob. adaptors<->arbitrariness are theoretically coupled (adaptor presence is the fingerprint of arbitrariness) so their negative axes legitimately correlate. instruct_* are UNCHANGED harrier query instructions ('Instruct: {task}\\nQuery: {passage}'); paper text is embedded as a document with NO instruction. The within-criterion pole-width diagnostic (pole_separation['within']) flags narrow/overlapping poles; edit freely.",
   "two_worlds": {
     "instruct_pos": "Retrieve text arguing that the phenomenon involves two independent worlds of molecules with no necessary physical or chemical link between them",
     "instruct_neg": "Retrieve text arguing that the phenomenon is a single continuous chemical process in which the molecules are directly and necessarily linked",
     "pos": [
-      "The system involves two independent worlds of molecules: two distinct sets of objects with no necessary physical or chemical link between them, as codons and amino acids form separate molecular domains.",
-      "Two separate molecular populations exist whose correspondence is not fixed by their chemistry; the sequence of nucleotides and the sequence of amino acids belong to different, mutually independent worlds.",
-      "There are two distinct organic worlds, a world of signs and a world of meanings, that remain chemically independent of one another.",
-      "The two molecular sets are not reducible to each other; each could exist and vary independently of the chemistry of the other.",
-      "Crucially, there are two separate and irreducible molecular alphabets here, not one: the objects of the first set carry no chemical instruction for the objects of the second, and either set could be replaced without altering the other.",
-      "The defining fact is duality: a sign-world and a meaning-world coexist as two ontologically distinct molecular populations, and nothing in the makeup of one entails the makeup of the other."
+      "A code is a set of rules that establish a correspondence, or a mapping, between the objects of two independent worlds.",
+      "We can prove that an organic code exists if we find two independent worlds of molecules and a set of adaptors that create a mapping between them.",
+      "The adaptors are required because there is no necessary link between the two worlds, and a fixed set of adaptors guarantees the specificity of the correspondence.",
+      "There is no necessary link between nucleic acids and amino acids, and only the rules of a code could provide a bridge between them; proteins arose from the integration of two different processes.",
+      "In protein synthesis a sequence of nucleotides is translated into a sequence of amino acids, and there is no deterministic link between codons and amino acids.",
+      "There are two distinct organic worlds, a world of signs and a world of meanings, that remain chemically independent of one another."
     ],
     "neg": [
+      "On the chemical paradigm, life is chemistry, or more precisely an extremely complex form of chemistry: a single continuous system of reactions, not two independent worlds.",
+      "When molecules form spontaneously, their final sequences are completely determined by the interactions between their own components.",
+      "On the stereochemical theory, codons and amino acids are linked directly and are therefore determined by chemistry, so no second independent world is required.",
       "The process takes place within a single continuous chemical system; there are not two independent molecular worlds but one set of reactions determined by ordinary thermodynamics.",
-      "The two molecules are directly complementary by physical necessity, so their correspondence is fixed by chemistry and they do not constitute independent worlds.",
-      "The phenomenon is a straightforward physico-chemical interaction reducible to the properties of a single class of molecules.",
       "One molecular species transforms directly into another along a chemically obligatory pathway, with no second, independent world involved.",
-      "There is no duality at all: a single molecular population undergoes a continuous reaction, and what looks like a second set is merely a further state of the same chemistry, fully entailed by it.",
       "Everything reduces to one world of molecules whose behaviour is dictated end to end by mass action and binding energy; positing a separate, independent second world is unnecessary."
     ]
   },
@@ -24,40 +24,40 @@
     "instruct_pos": "Retrieve text arguing that a third class of adaptor molecule physically bridges two independent molecular worlds",
     "instruct_neg": "Retrieve text arguing that the two molecules interact directly, by catalysis or complementarity, with no mediating adaptor",
     "pos": [
-      "A third class of molecule, an adaptor such as transfer RNA, physically bridges the two worlds, recognising an object in one world and carrying the corresponding object from the other.",
-      "The mapping is implemented by dedicated adaptor molecules that connect the two independent sets; these adaptors are the molecular fingerprints of the code.",
+      "The bridge between the two worlds is realized by a third type of molecule called an adaptor; transfer-RNAs act as adaptors, recognising codons at one site and receiving amino acids at another.",
+      "The adaptors are the molecular fingerprints of the codes, and their presence in a biological process is a sure sign that that process is based on a code.",
+      "A third type of molecule, called an adaptor, builds a bridge between two molecular worlds that have no necessary link between them.",
+      "Only the rules of a code, implemented by adaptor molecules, could provide a bridge between nucleic acids and amino acids.",
       "Bridging molecules stand between the two worlds and establish the correspondence, as aminoacyl-tRNAs link codons to amino acids.",
-      "The link between the two domains is realised by a separate set of mediator molecules rather than by direct contact between the domains themselves.",
-      "A distinct third party does the joining: an adaptor that touches one world at one end and the other world at the other end, so the two never meet directly and the adaptor alone fixes which goes with which.",
-      "The hallmark of the mechanism is a dedicated go-between molecule — neither sign nor meaning itself — whose two recognition surfaces are what physically instantiate the correspondence."
+      "A distinct third party does the joining: an adaptor that touches one world at one end and the other world at the other end, so the two never meet directly and the adaptor alone fixes which goes with which."
     ],
     "neg": [
+      "On the stereochemical theory, codons and amino acids are linked directly by their own chemical affinity, with no adaptor mediating between them.",
       "The two molecules interact directly through complementary surfaces, with no third mediating adaptor required.",
       "An enzyme catalyses the transformation of substrate into product; it speeds a chemical reaction rather than acting as an adaptor that maps one world onto another.",
       "Recognition occurs by direct template complementarity between the two strands, without any intervening bridging molecule.",
       "Binding is lock-and-key between the partners themselves, so no separate adaptor class mediates the interaction.",
-      "The partners contact each other face to face and that contact alone determines the outcome; there is no third go-between molecule anywhere in the mechanism.",
-      "Nothing mediates: the two molecules meet directly and their own complementary chemistry does all the work, leaving no role for any adaptor."
+      "The partners contact each other face to face and that contact alone determines the outcome; there is no third go-between molecule anywhere in the mechanism."
     ]
   },
   "arbitrariness": {
     "instruct_pos": "Retrieve text arguing that the coding rules are arbitrary conventions, compatible with but not dictated by physical law, and could in principle be otherwise",
     "instruct_neg": "Retrieve text arguing that the correspondence is dictated by stereochemistry, affinity or thermodynamic necessity and could not be otherwise",
     "pos": [
-      "The coding rules are conventional rather than dictated by physical law: the correspondence is compatible with chemistry but not determined by it, and could in principle have been otherwise.",
-      "The assignment between the two worlds is arbitrary, a natural convention, as shown by the fact that the genetic code could be rewritten without violating any law of chemistry.",
-      "Nothing in the physics of the molecules forces this particular mapping; the rules are fixed by convention and alternative codes are equally possible.",
-      "The relationship is not determined by molecular affinity; it is a historically frozen convention that could vary.",
-      "The pairing is conventional to the core: swap the assignments and no law of physics or chemistry would be broken, which proves the mapping is chosen, not compelled.",
-      "Because countless alternative rule-sets are equally consistent with the underlying chemistry, the actual rules are an arbitrary historical accident, not a chemical inevitability."
+      "In science, arbitrariness means independence from physical necessity: codes and conventions are arbitrary because their rules are not dictated by the laws of physics.",
+      "In the genetic code it has been proven that any codon can be associated with any amino acid, just as any group of dots and dashes can be associated with any letter of the alphabet.",
+      "The coding rules, although completely compatible with the laws of physics and chemistry, are not dictated by these laws; in this sense they are arbitrary.",
+      "Any letter of the alphabet could be associated with countless combinations of dots and dashes, so a code is a small set of arbitrary rules selected from an unlimited number of possibilities.",
+      "Introducing two extra nucleotides into a tRNA made it carry a different amino acid, proving that the link between codons and amino acids is not fixed by chemistry.",
+      "The relationship is not determined by molecular affinity; it is a historically frozen convention that could vary."
     ],
     "neg": [
+      "On the stereochemical theory, codons and amino acids are determined by chemistry: the correspondence follows from molecular structure and could not be otherwise.",
+      "When molecules form spontaneously, their final sequences are completely determined by the interactions between their own components, leaving no freedom for alternative assignments.",
       "The specificity is dictated by stereochemistry: the pairing is fixed for steric reasons and could not be otherwise.",
-      "The correspondence follows necessarily from thermodynamics and molecular structure, so the rules are determined by chemistry rather than chosen.",
       "Lock-and-key complementarity makes the interaction obligatory; the outcome is physically determined, not conventional.",
       "The mapping is a direct consequence of chemical affinity and binding energy, leaving no freedom for alternative assignments.",
-      "There is exactly one possible outcome and physics fixes it: the geometry and energetics permit no alternative pairing, so the correspondence could not have been otherwise.",
-      "Far from arbitrary, the assignment is compelled by molecular shape and affinity — change nothing and the same pairing must result every time, because chemistry forbids the alternatives."
+      "There is exactly one possible outcome and physics fixes it: the geometry and energetics permit no alternative pairing, so the correspondence could not have been otherwise."
     ]
   },
   "_controls": {
