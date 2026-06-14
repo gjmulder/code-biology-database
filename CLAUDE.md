@@ -11,11 +11,15 @@ corpus and scores how strongly each paper's literature argues Barbieri's definit
 an organic code. It has two independent measurement axes over the same papers:
 
 - **LLM verdicts** (`criteria_judge.py`) — a grounded categorical `met / not_met /
-  unclear` per criterion, every `met` gated by a verbatim quote. The categorical backbone.
+  unclear` per criterion, every `met` gated by a verbatim quote.
 - **Embedding axis** (`embed_*` + `run_harrier_embed.py`) — a continuous corpus-contrastive
-  score `e` per criterion, reported **side-by-side** with the verdicts. **Design Decision 0
-  (load-bearing): the embedding axis is independent — it never overrides, gates, or
-  band-merges the verdict.**
+  score `e` per criterion.
+
+The two axes are **independent and reported side-by-side** — neither is authoritative.
+The verdicts are *synthetic* ground truths from comparatively weak models and may suffer
+the same failure modes as the embeddings (see §6), so the embedding axis is **not** subordinated
+to them: it does not merely position within verdict-chosen bands. Agreement between the two
+(e.g. ρ in §5) is corroboration, not validation against truth.
 
 ### The three criteria (the definition being measured)
 Per Barbieri (`www.codebiology.org/index.html`), a biological code exists only if **all
@@ -203,7 +207,7 @@ set:
   understanding is needed.
 - **Next quality step:** re-tune the judge prompts for paragraph-level context, then a
   single higher-quality run sending **all three** criteria to Nemotron (≈ $9). A gold-set
-  κ/F1 validation of the verdict backbone remains future work.
+  κ/F1 validation of the verdicts themselves remains future work.
 - **Backlog:** refined ranking via a cross-encoder over the top candidates.
 
 ## 7. Development, testing & reporting rules
