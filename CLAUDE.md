@@ -140,9 +140,10 @@ All embedding output is stored in **MySQL on asushimu** (conda mysqld, data dir
 The GPU host returns a transient `embed_out.json` purely as transport — the driver
 loads it into MySQL and deletes it. Connection params live in gitignored `.env`
 (`DB_HOST/PORT/NAME/USER/PASS`); never commit it. Tables (vectors are float32 LE bytes):
-- **`doc_vectors`** (`code_number, pdf_path, method, chunk_idx, dim, vec LONGBLOB`) and
-  **`pole_vectors`** (`criterion, pole, dim, vec`) — the **raw vectors** that make the
-  offline `--recompute` levers possible (the Run 2 structural unlock).
+- **`doc_vectors`** (`code_number, pdf_path, method, chunk_idx, dim, vec LONGBLOB`),
+  **`pole_vectors`** (`criterion, pole, dim, vec`) and **`control_vectors`**
+  (`name, dim, vec`, captured by `--controls-only`) — the **raw vectors** that make the
+  offline `--recompute` levers possible (the Run 2 structural unlock), controls included.
 - **`embedding_scores`** — one row per `(code_number, pdf_path, method, criterion)` with
   `e` / `verdict` / `confidence`; **`code_number` is the leading PK column**.
   `--recompute` upserts `e` only, preserving the verdict.
@@ -190,6 +191,10 @@ e_c(d) = a_c⊥ · normalize( whiten(d − μ, B) )               # chunk window
   where the PC estimate is trustworthy.
 - **`--recompute`** — rescore from the persisted vectors with the above flags, no GPU;
   upserts `e` only (verdict/confidence preserved) and regenerates `report.md`.
+- **`--controls-only`** — one cheap GPU run (`embed_independent.py --controls-only`) that
+  embeds only the control texts (one model load, papers untouched), upserts
+  `control_vectors`, then recomputes so the controls are scored leverred. Used once to
+  backfill the controls after the structural 220-paper run predated control-vector capture.
 - `pdf_text.py` — `extract_abstract()` (abstract heading, preamble fallback).
 
 ### Critical environment assumptions (hard-won)
@@ -207,9 +212,10 @@ e_c(d) = a_c⊥ · normalize( whiten(d − μ, B) )               # chunk window
 - **Run logging:** each run logs total embeds per method up front, then per doc a
   stable `id=<pdf-stem>`, `[doc i/N]`, and a running `done/total` per method.
 
-### Findings — Run 2 leverred (220-paper corpus, 2026-06-14)
+### Findings — Run 2 leverred (219-paper corpus, 2026-06-14)
 The one structural GPU re-run landed (220 papers × 3 methods = 962 chunk windows, 5376-dim;
-6 pole vectors). Scored offline (`--recompute`, `k=0`, `strength=0.5`).
+6 pole vectors), then the in-corpus code-321 self-reference was dropped → **219 papers**.
+Scored offline (`--recompute`, `k=0`, `strength=0.5`); controls captured via `--controls-only`.
 - **The 428 halo collapsed (the headline win).** In Run 1 code 428 topped *all three*
   criteria including `arbitrariness` (`not_met`). At corpus scale (111 codes) it is now
   mid-pack everywhere: `two_worlds` (met) rank 32/111, `adaptors` (met) rank 12, and
@@ -220,16 +226,25 @@ The one structural GPU re-run landed (220 papers × 3 methods = 962 chunk window
 - **Pole widths `within` (centred cos pos↔neg, lower = better separated):** `arbitrariness`
   +0.515 (best), `adaptors` +0.629, `two_worlds` +0.680. Poles still overlap enough that
   **ranks are trustworthy, magnitudes less so**.
-- **A self-corpus leak surfaced:** code 321 (`www.codebiology.org/conferences/Guimaraes…`,
-  an in-corpus Code Biology *conference* document, not a primary paper) now tops most
-  criteria — it reads maximally in-register because the poles are mined from that same
-  corpus. Such meta-documents should be excluded/flagged.
-- **Two honest gaps.** (1) Control scores in `report.md` are still the **pre-lever Run-1
-  contrastive** values — control document vectors aren't persisted, so `--recompute` can't
-  re-score them; refreshing them needs one re-embed that captures control vectors.
-  (2) Spearman ρ is unchanged (+0.522 / +0.522 / n-a) — the labelled-verdict subset is too
-  small and imbalanced (`arbitrariness` has no positives) to *measure* the improvement, so
-  the levers' gain shows in the 428 ranks, not in ρ.
+- **A self-corpus leak surfaced — now fixed.** Code 321
+  (`www.codebiology.org/conferences/Guimaraes…`, an in-corpus Code Biology *conference*
+  document, not a primary paper) topped most criteria — it reads maximally in-register
+  because the poles are mined from that same corpus. `--recompute` now drops any
+  `codebiology.org` self-reference (`drop_self_references` / `is_corpus_self_reference`)
+  from the corpus (μ, ranking, report) and evicts its stale score rows; corpus is now
+  **219 papers**.
+- **Leverred controls — gap closed.** Control vectors are now persisted
+  (`control_vectors` table) via a cheap `--controls-only` GPU run (one model load, papers
+  untouched), so `--recompute` rescores the controls through the **same corpus geometry**
+  as the papers (`score_controls`), and `report.md` drops the pre-lever caveat. They
+  behave: `genetic_code_positive` +0.184 / +0.153 / +0.092 (positive on all three);
+  `deterministic_chemistry_negative` −0.025 / −0.194 / **−0.224** (most negative on
+  `arbitrariness`, the A3 prediction); arbitrariness separation 0.316 > the pre-lever
+  0.305.
+- **Remaining honest gap.** Spearman ρ is unchanged (+0.522 / +0.522 / n-a) — the
+  labelled-verdict subset is too small and imbalanced (`arbitrariness` has no positives)
+  to *measure* the improvement, so the levers' gain shows in the 428 ranks + control
+  separation, not in ρ.
 
 ### Findings — Run 1 contrastive (10-paper, 2026-06-14), the motivation for Run 2
 These are the **pre-lever, double-cosine** results; the three structural weaknesses here
