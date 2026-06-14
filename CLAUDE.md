@@ -1,274 +1,226 @@
 # CLAUDE.md
 
-## Project Context
-This project processes Code Biology data from `biological_codes.csv` (derived from `Biological_Code_List_20260531.pdf`).
-- **Expected Code Categories:** 435
-- **Expected References:** 2299
+High-level design, development, testing and reporting guide for the Code Biology
+project. `@environment_notes.md` holds host-specific operational detail (GPUs, MySQL
+host, llama-server, model runtimes) — keep that out of this file.
 
-## Code Biology Definitional Database
-Beyond the code/citation list, the repo holds a corpus of the foundational
-literature and the canonical web presence of the field. Together with
-`biological_codes.csv` these define what Code Biology *is* — the seminal texts,
-the society, and its conferences.
+## 1. What the project is
 
-### What qualifies as an organic code — the minimum criteria
-Per Barbieri's definition (`www.codebiology.org/index.html`), a biological code
-is proven to exist only if **all three** of the following are demonstrated. The
-test is deliberately objective and experimentally falsifiable:
-1. **Two independent worlds of molecules** — two distinct sets of objects with no
-   necessary physical/chemical link between them (e.g. codons and amino acids).
-2. **A set of adaptors** — a *third* type of molecule that physically bridges the
-   two worlds (e.g. tRNAs). Adaptors are the "molecular fingerprints" of a code;
-   their presence is the empirical signature that coding, not mere chemistry, is
-   at work.
-3. **Arbitrariness of the coding rules** — the mapping is conventional, not
-   dictated by physical law. The rules are *compatible* with physics/chemistry
-   but **not determined** by them, so they could in principle be otherwise.
+The project turns the canonical Code Biology code/citation list into an analysable
+corpus and scores how strongly each paper's literature argues Barbieri's definition of
+an organic code. It has two independent measurement axes over the same papers:
 
-This distinguishes **coding** (about *meaning*; evolution by natural conventions)
-from **copying** (about *information*; evolution by natural selection) — the two
-are held to be irreducible to each other. Supporting terms (*Adaptor*,
-*Arbitrariness*, *Natural conventions*) are formally defined in `glossary.html`.
+- **LLM verdicts** (`criteria_judge.py`) — a grounded categorical `met / not_met /
+  unclear` per criterion, every `met` gated by a verbatim quote. The categorical backbone.
+- **Embedding axis** (`embed_*` + `run_harrier_embed.py`) — a continuous corpus-contrastive
+  score `e` per criterion, reported **side-by-side** with the verdicts. **Design Decision 0
+  (load-bearing): the embedding axis is independent — it never overrides, gates, or
+  band-merges the verdict.**
 
-Note: not every entry in the source PDF is a "code" in this strict molecular
-sense — e.g. code 352 (SeqCode) is a nomenclature/naming code, a looser usage.
+### The three criteria (the definition being measured)
+Per Barbieri (`www.codebiology.org/index.html`), a biological code exists only if **all
+three** are demonstrated (objective, experimentally falsifiable):
+1. **Two independent worlds of molecules** — two distinct sets with no necessary
+   physical/chemical link (e.g. codons and amino acids).
+2. **A set of adaptors** — a *third* molecule that physically bridges the two worlds
+   (e.g. tRNAs); the empirical "molecular fingerprint" of a code.
+3. **Arbitrariness of the coding rules** — the mapping is conventional, *compatible* with
+   but **not determined** by physics/chemistry. The subtlest, most contested criterion.
 
-### `Code_Biology_PDFs/` — seminal texts
-The core literature defining the discipline, primarily by Marcello Barbieri
-(founder of the field) and Sam Major:
-- **The Organic Codes: An Introduction to Semantic Biology** (Barbieri) — the
-  founding monograph. Two copies: `The_Organic_Codes_an_introduction_to_semantic_biol.pdf`
-  and `The_organic_codes_An_introduction_t_z_library_sk,_1lib_sk,.pdf`.
-- **Introduction to Code Biology** — Barbieri (2014).
-- **What Is Code Biology?** — Barbieri (2018).
-- **Codes and Evolution — The Origin of Absolute Novelties** — Barbieri (2024).
-- **Life and Semiosis: The Real Nature of Information and Meaning** — Barbieri.
-- **A Simple Measure for Biocomplexity** — Barbieri.
-- **Codes across (life)sciences** — interdisciplinary survey (final published).
-- **Biological Codes: A Field Guide for Code Hunters.**
-- **Archetypes and Code Biology** — Major (2021).
-- **From Code to Archetype** — Major (2025) (`.pdf` + `.txt` transcript).
+This separates **coding** (meaning; natural conventions) from **copying** (information;
+natural selection). Not every PDF entry is a "code" in this strict sense — e.g. code 352
+(SeqCode) is a nomenclature code.
 
-### `www.codebiology.org/` — society web mirror
-A static mirror of the International Society of Code Biology website (102 HTML
-pages, 31 PDFs). Key content:
-- **`index.html`** — the field's public definition ("more than 200 biological
-  codes have been discovered"; codes as a third component of life beyond
-  chemistry and information).
-- **`glossary.html`** — terminology by Barbieri, de Beule & Hofmeyr (~100 terms:
-  semiosis, codepoiesis, organic meaning, Umwelt, …).
-- **`brief-history.html`** — Barbieri's origin story of the field (genotype/
-  phenotype/ribotype trinity, 1981 onward).
-- **The society's published code lists** — `database.html` indexes two editions:
-  - `database.pdf` — **First Database, December 2022: 237 codes.**
-  - `second-database.pdf` — **Second Database, May 2026: 418 codes.**
-  These are the upstream lineage of the project's source
-  `Biological_Code_List_20260531.pdf`, but **not identical to it** — that file is
-  a later sibling (different md5/size) from which extraction recovers **435**
-  codes, vs the 418 the website quotes for the second edition. Treat the source
-  PDF as authoritative for this project; the website figures are for context.
-- **Society governance** — `society.html`, `members-of-the-society.html`,
-  `application.html`, the governing-board pages (2012, 2018, 2022), `pdf/constitution.pdf`.
-- **`conferences/`** — every ISCB meeting, one folder per event: Jena 2015,
-  Urbino 2016, Hungary 2017, Granada 2018, Friedrichsdorf 2019, Luznica 2021,
-  Olomouc 2022, Guimarães 2023, La Spezia 2024, Zagreb 2025, Guimarães 2026 —
-  plus calls for papers, programmes, and `conferences/pdf/` abstracts/papers.
-- **`videos.html`, `photogalleries.html`, `Immagini/`** — media archive.
+### Source figures
+- Source PDF `Biological_Code_List_20260531.pdf` → **435 code categories**, **~2299
+  references** quoted (extraction recovers 2290). Treat the source PDF as authoritative;
+  the society website's published editions (`database.pdf` 237 codes, 2022;
+  `second-database.pdf` 418 codes, 2026) are upstream context, not identical to it.
 
-## Current Status
-The extraction pipeline is implemented and passing its test suite.
+### Supporting corpus (used to mine prototypes and for context)
+- **`Code_Biology_PDFs/`** — the seminal texts (Barbieri's *The Organic Codes*,
+  *Introduction to Code Biology*, *What Is Code Biology?*, *Codes and Evolution*, …; Major's
+  *Archetypes and Code Biology*, *From Code to Archetype*).
+- **`www.codebiology.org/`** — static mirror of the ISCB site (102 HTML pages, 31 PDFs).
+  `index.html` (public definition), `glossary.html` (~100 terms by Barbieri, de Beule &
+  Hofmeyr), `brief-history.html`, the published databases, society governance, and
+  `conferences/` (every ISCB meeting). Positive/negative prototype passages are mined here.
 
-- **`extract_csv.py`** — parses the PDF directly with `pdfplumber` and emits
-  `biological_codes.csv` with columns `Code Number, Code Name, Paper Name, URL`.
-  Each citation in the source is a hyperlink whose anchor text is the full
-  reference, so hyperlink runs (not text splitting) are the extraction anchor.
-- **`test_extract.py`** — pytest suite (18 tests) covering code coverage,
-  contiguity, known per-code reference counts, URL validity, cross-page
-  continuation, and cross-row hyperlink-bleed regressions. Run with `pytest`.
-- **Output:** 2290 references across all **435** codes (within tolerance of the
-  quoted 2299). One reference (code 352, SeqCode) has citation text but no
-  hyperlink, so it carries an empty URL.
+## 2. The data & processing pipeline (reproducible, end-to-end)
 
-## PDF Availability
-`download_pdfs.py` fetches the full-text PDF for each reference. It derives a
-DOI from the URL, then tries, in order: the Crossref `application/pdf` link,
-every Unpaywall open-access location, and the landing page's
-`citation_pdf_url` meta tag. It is **legal-OA only** — no Sci-Hub or paywall
-circumvention. See `test_download_pdfs.py` (30 tests, fully offline).
+Each step lists **script → input → output → tests**. Run `pytest` (162 tests, fully
+offline) after any change. MySQL on asushimu is the system of record from step 5 on.
 
-**Current state (last full run, from a non-institutional home network):**
-- **471 of 2240 unique references downloaded (~21%)** → `pdfs/` (gitignored, 2.1 GB;
-  regenerate with `python3 download_pdfs.py`). 49 duplicate citations share a DOI.
-- **1769 not retrievable**, listed with reasons in `failed_downloads.csv`:
-  - *Hard paywall, no OA copy* (the bulk) — Elsevier/ScienceDirect, Cell,
-    Nature-subscription, Springer, Wiley, OUP, AAAS/Science, T&F. No legal
-    source without a subscription.
-  - *CDN bot-blocked but actually OA* — e.g. MDPI (~56): Cloudflare returns 403
-    to scripted clients. Downloadable by hand in a browser.
-  - *PMC-only* — NCBI / Europe PMC block non-interactive PDF fetches from this
-    network (403 / HTML interstitial on every endpoint).
+1. **Extract the code list** — `extract_csv.py`
+   - in: `Biological_Code_List_20260531.pdf` · out: `biological_codes.csv`
+     (`Code Number, Code Name, Paper Name, URL`).
+   - Parses the PDF with `pdfplumber`; each citation is a hyperlink whose anchor text is
+     the full reference, so **hyperlink runs (not text splitting) are the extraction
+     anchor**. → 2290 references across all 435 codes (code 352/SeqCode has citation text
+     but no hyperlink → empty URL).
+   - tests: `test_extract.py` (coverage, contiguity, per-code counts, URL validity,
+     cross-page continuation, cross-row hyperlink-bleed regressions).
 
-**Resumability:** re-runs skip PDFs already on disk and reuse
-`crossref_cache.json` + `unpaywall_cache.json`, so effort is spent only on new
-attempts. Coverage would rise substantially from an institutional network
-(EZproxy/OpenAthens) or with an Unpaywall-plus-repository proxy.
+2. **Download full-text PDFs** — `download_pdfs.py`
+   - in: `biological_codes.csv` · out: `pdfs/` (gitignored), `failed_downloads.csv`,
+     `crossref_cache.json` + `unpaywall_cache.json`.
+   - Derives a DOI from the URL, then tries in order: Crossref `application/pdf`, every
+     Unpaywall OA location, the landing page `citation_pdf_url`. **Legal-OA only — no
+     Sci-Hub / paywall circumvention.** Resumable: skips PDFs on disk, reuses caches.
+   - Coverage from a non-institutional home network: **471 of 2240 unique refs (~21%)**;
+     1769 not retrievable (mostly hard paywall; some CDN bot-blocked OA; some PMC-only).
+     Coverage would rise on an institutional network.
+   - tests: `test_download_pdfs.py`.
 
+3. **Extract text from PDFs** — `pdf_text.py` (library used by steps 4 & 6)
+   - `extract_text()` (full text), `extract_abstract()` (abstract heading → preamble
+     fallback), `select_for_budget()` (token-budget trim).
+   - tests: `test_pdf_text.py`.
 
-## Criteria Scoring — embeddings as an independent axis
-A separate analysis scores how strongly each paper's text *argues* the three
-criteria (`two_worlds`, `adaptors`, `arbitrariness`), to complement the categorical
-LLM verdicts from `criteria_judge.py`. The LLM `confidence` is saturated (0.9–1.0)
-and carries no gradation, so a **corpus-contrastive embedding** supplies the
-continuous signal.
+4. **Embed the papers (GPU, once per structural run)** — `run_harrier_embed.py`
+   - host: asushimu 3090 Ti · in: paper texts + prototype passages · out: transient
+     `embed_out.json` (transport only).
+   - Emits **raw vectors only** — document vectors (three methods, below) and pooled pole
+     vectors (3 criteria × pos/neg). It does **not** compute `e`. Model
+     `microsoft/harrier-oss-v1-27b` (5376-dim); runtime detail in `@environment_notes.md`.
+   - **Three chunking methods**, each embedded as a separate document so we can test which
+     granularity tracks the verdict: **full** (whole capped paper), **abstract** (abstract
+     only), **chunk** (8192-token windows, 50% overlap, scored per-window then **max-pooled**).
+   - tests: `test_run_harrier_embed.py`.
 
-**Decision 0 (load-bearing):** the embedding axis is **independent** — reported
-side-by-side with the verdicts, never overriding, gating, or band-merging them. The
-verdict stays the categorical backbone.
+5. **Persist vectors + score `e` offline (driver)** — `embed_independent.py` (+ `db.py`,
+   `embed_score.py`)
+   - in: `embed_out.json`, `prototypes.json` · out: rows in MySQL `codebiology`.
+   - Loads vectors to MySQL via `db.store`, then computes `e` **offline** from the
+     persisted vectors with the four space-level levers (§4). After one structural GPU run,
+     every lever is re-tunable and the report regenerates **with no further GPU** via
+     `--recompute`. `--controls-only` is a cheap GPU run that embeds only the control texts.
+   - Drops any `codebiology.org` self-reference from the corpus (`drop_self_references`) so
+     the in-corpus conference docs can't leak into the ranking.
+   - tests: `test_embed_score.py`, `test_embed_independent.py`, `test_db.py`.
 
-### Three chunking methods (each fed as separate documents)
-Each paper is embedded **three ways** to test which granularity best tracks the
-verdict, surfaced as three columns (`e_full` / `e_abstract` / `e_chunk`) in
-`report.md` + a `PER-PAPER VERDICTS` table with the verdict and its confidence:
-- **full** — the whole (char-budget-capped) paper as one document.
-- **abstract** — the abstract section only.
-- **chunk** — 8192-token windows at 50% overlap (stride 4096), scored per window then
-  **max-pooled** (strongest evidence anywhere).
+6. **Judge the papers (LLM verdicts)** — `criteria_judge.py`, driven by `run_sample.py`
+   (sampling) or `judge_corpus.py` (corpus backfill)
+   - in: papers on disk + `biological_codes.csv` · out: `sample_verdicts.jsonl`
+     (resumable APPEND checkpoint — the file system-of-record for spend safety) →
+     upserted into MySQL `embedding_scores` (verdict/confidence only; the embedding `e` is
+     left untouched, via `db.update_verdicts`).
+   - **Routing:** criteria 1 & 2 (concrete) → local **Gemma-4-31B** (free); criterion 3
+     (*arbitrariness*, subtle) → paid **Nemotron** (`nvidia/nemotron-3-ultra-550b-a55b`,
+     1M ctx, reads whole paper) via OpenRouter. `run_batch` is concurrent
+     (`DEFAULT_WORKERS=6`), resumable, per-paper failure isolation.
+   - **Cost:** criterion-3-only ≈ **$3 / ~220 papers**. A future higher-quality run sending
+     **all three** criteria to Nemotron is ≈ **$9 / run** (do this once the prompts are
+     better tuned — see §6 caveats).
+   - tests: `test_criteria_judge.py`, `test_openrouter_agent.py`.
 
-### MySQL is the system of record (not JSON)
-All embedding output is stored in **MySQL on asushimu** (conda mysqld, data dir
-`asushimu:/nvme/mysql/data`, DB `codebiology`), **not** JSON. `db.py` owns the schema.
-The GPU host returns a transient `embed_out.json` purely as transport — the driver
-loads it into MySQL and deletes it. Connection params live in gitignored `.env`
-(`DB_HOST/PORT/NAME/USER/PASS`); never commit it. Tables (vectors are float32 LE bytes):
-- **`doc_vectors`** (`code_number, pdf_path, method, chunk_idx, dim, vec LONGBLOB`),
-  **`pole_vectors`** (`criterion, pole, dim, vec`) and **`control_vectors`**
-  (`name, dim, vec`, captured by `--controls-only`) — the **raw vectors** that make the
-  offline `--recompute` levers possible (the Run 2 structural unlock), controls included.
+7. **Generate the report** — `embed_independent.py --report-only`
+   - in: MySQL · out: `report.md` + `embedding_scores.csv` (regenerated from the DB).
+   - `--report-only` reads scores; `--recompute` rescores from vectors (lever flags) then
+     writes. Report sections: per-paper verdicts + embedding columns; Spearman
+     ρ(e, verdict_ordinal) per method × criterion; pole separation; pole width `within`;
+     control checks.
+
+## 3. MySQL schema (`db.py`) — system of record
+
+DB `codebiology` on asushimu (host/connection detail in `@environment_notes.md`). Vectors
+are float32 LE bytes in `LONGBLOB`. Tables:
+- **`doc_vectors`** (`code_number, pdf_path, method, chunk_idx, dim, vec`),
+  **`pole_vectors`** (`criterion, pole, dim, vec`), **`control_vectors`** (`name, dim, vec`)
+  — the **raw vectors** that make offline `--recompute` possible.
 - **`embedding_scores`** — one row per `(code_number, pdf_path, method, criterion)` with
-  `e` / `verdict` / `confidence`; **`code_number` is the leading PK column**.
-  `--recompute` upserts `e` only, preserving the verdict.
-- **`pole_separation`** — pole widths incl. the centred `within` rows; **`control_scores`**;
-  **`run_meta`** (lever params + scoring mode). `report.md` regenerates from the DB
-  (`--report-only` reads scores; `--recompute` rescores then writes).
+  `e`, `verdict`, `confidence`, `model`, `run_ts`. **`code_number` is the leading PK
+  column.** `--recompute` upserts `e` only (preserving the verdict); `update_verdicts`
+  upserts verdict/confidence only (preserving `e`).
+- **`pole_separation`** (incl. centred `within` rows), **`control_scores`**, **`run_meta`**
+  (lever params + scoring mode).
 
-### Architecture (Run 2): GPU emits vectors, the driver scores offline
-Run 1's double-cosine `e = cos(paper, POS) − cos(paper, NEG)` under-discriminated
-(a topicality halo let code 428 top *all three* criteria; controls barely separated —
-the classic decoder-only-embedder anisotropy). The fix is **space-level, not
-prompt-level**, so the architecture split in two:
+## 4. The four space-level levers — offline scoring (`embed_score.py`)
 
-- **`run_harrier_embed.py` (GPU, asushimu's 3090 Ti)** emits **raw vectors only** — the
-  document vectors (full / abstract / each chunk) and the pooled pole vectors (3 criteria
-  × pos/neg). It no longer computes `e`. Loads `microsoft/harrier-oss-v1-27b` (Gemma3-27B
-  decoder-only embedder, 5376-dim, MIT) via sentence-transformers in **4-bit**
-  (bitsandbytes nf4, bf16 compute, ≈13.5 GB).
-- **`embed_independent.py` (driver, this host)** persists the vectors to MySQL, then
-  computes `e` **offline** with the four levers below. After **one** structural GPU
-  re-run every lever is re-tunable and the report regenerates with **no further GPU** via
-  `--recompute` (sibling of `--report-only`).
+Run 1's double-cosine `e = cos(paper, POS) − cos(paper, NEG)` under-discriminated: a
+topicality halo and the decoder-only-embedder anisotropy meant in-register text all sat in
+a narrow cone. The fix is **space-level, not prompt-level**:
 
-### Four space-level levers — the offline `--recompute` scoring (`embed_score.py`)
 ```
-μ      = mean of all document (rep) vectors                 # centring origin
-B      = whiten_basis(center(reps, μ), k)                   # top-k PCs to strip (lever: --whiten-k)
-a_c    = normalize(p̂_c − n̂_c)        on centred poles       # axis-projection contrast (lever)
+μ      = mean of all document vectors                       # centring origin
+B      = whiten_basis(center(reps, μ), k)                   # top-k PCs to strip (--whiten-k)
+a_c    = normalize(p̂_c − n̂_c)        on centred poles       # axis-projection contrast
 ŝ      = shared_direction({a_c})     = first PC of the axes  # shared register direction
-a_c⊥   = orthogonalize(a_c, ŝ, strength)                    # partial out topicality (lever: --shared-strength)
+a_c⊥   = orthogonalize(a_c, ŝ, strength)                    # partial out topicality (--shared-strength)
 e_c(d) = a_c⊥ · normalize( whiten(d − μ, B) )               # chunk windows max-pooled
 ```
-- `recompute(doc_vecs, poles, k, strength)` is the pure composition; `build_axes`,
-  `whiten_basis`, `shared_direction`, `orthogonalize(axis, shared, strength)` and
-  `axis_score` are the unit-tested pieces. `within[c] = cos(centred pos, centred neg)`
-  (pole width) is recomputed on the centred poles and **rendered** in `report.md`.
 
-#### Tunables (smoke-test-calibrated defaults, both CLI flags)
-- **`--shared-strength` (default `DEFAULT_SHARED_STRENGTH = 0.5`)** — how hard each
-  criterion axis is orthogonalized against the shared register direction. `1.0`
-  over-corrects (collapses 428's *legitimate* `two_worlds` along with its `arbitrariness`
-  halo); `0.5` removes the halo while keeping real signal.
-- **`--whiten-k` (default `DEFAULT_WHITEN_K = 0`)** — number of top PCs removed. `k≥1`
-  hurt on the 20-paper sample (the top PC still carried signal); revisit at corpus scale
-  where the PC estimate is trustworthy.
-- **`--recompute`** — rescore from the persisted vectors with the above flags, no GPU;
-  upserts `e` only (verdict/confidence preserved) and regenerates `report.md`.
-- **`--controls-only`** — one cheap GPU run (`embed_independent.py --controls-only`) that
-  embeds only the control texts (one model load, papers untouched), upserts
-  `control_vectors`, then recomputes so the controls are scored leverred. Used once to
-  backfill the controls after the structural 220-paper run predated control-vector capture.
-- `pdf_text.py` — `extract_abstract()` (abstract heading, preamble fallback).
+`recompute(doc_vecs, poles, k, strength)` is the pure composition; `build_axes`,
+`whiten_basis`, `shared_direction`, `orthogonalize`, `axis_score` are unit-tested pieces.
+`within[c] = cos(centred pos, centred neg)` (pole width) is recomputed and rendered.
 
-### Critical environment assumptions (hard-won)
-- **GPU pinning:** the 3090 Ti is **GPU index 2** under
-  `CUDA_DEVICE_ORDER=PCI_BUS_ID`. The two GTX 1080 Tis are sm_61, **unsupported** by
-  torch 2.8 — always run with `CUDA_VISIBLE_DEVICES=2`.
-- **VRAM ceiling → token cap:** a **32k-token forward pass OOMs** 27B/4-bit on the
-  24 GB card (a 115k-char paper at 32k tokens fails; ~23k tokens used 20.8 GB).
-  The `full`/`abstract` methods are therefore capped at **`--max-seq 16384`**, and the
-  run sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` + `torch.cuda.empty_cache()`
-  per doc. `full` thus embeds the first ~16k tokens of long papers; `chunk` gives full
-  coverage. The 8192-token chunk windows are proven to fit.
-- **Dependency pins on asushimu:** `peft>=0.11` (the bundled `0.4.0.dev0` lacks
-  `PeftModelForFeatureExtraction` that ST 5.x imports), `numpy<2` (ABI), `pyarrow<17`.
-- **Run logging:** each run logs total embeds per method up front, then per doc a
-  stable `id=<pdf-stem>`, `[doc i/N]`, and a running `done/total` per method.
+**Tunables (CLI flags, smoke-calibrated defaults):**
+- `--shared-strength` (default `0.5`) — how hard each axis is orthogonalized against the
+  shared register direction. `1.0` over-corrects; `0.5` removes the halo, keeps real signal.
+- `--whiten-k` (default `0`) — number of top PCs removed. `k≥1` hurt at small sample;
+  revisit at corpus scale.
 
-### Findings — Run 2 leverred (219-paper corpus, 2026-06-14)
-The one structural GPU re-run landed (220 papers × 3 methods = 962 chunk windows, 5376-dim;
-6 pole vectors), then the in-corpus code-321 self-reference was dropped → **219 papers**.
-Scored offline (`--recompute`, `k=0`, `strength=0.5`); controls captured via `--controls-only`.
-- **The 428 halo collapsed (the headline win).** In Run 1 code 428 topped *all three*
-  criteria including `arbitrariness` (`not_met`). At corpus scale (111 codes) it is now
-  mid-pack everywhere: `two_worlds` (met) rank 32/111, `adaptors` (met) rank 12, and
-  crucially `arbitrariness` (not_met) rank 22 — no longer dominating. Its strongest
-  criterion is now a `met` one (adaptors). Mild over-correction on `full` (its met
-  `two_worlds` at rank 32 dips below its not_met `arbitrariness` at 22), but both middling
-  and the absolute `e` gap is tiny.
-- **Pole widths `within` (centred cos pos↔neg, lower = better separated):** `arbitrariness`
-  +0.515 (best), `adaptors` +0.629, `two_worlds` +0.680. Poles still overlap enough that
-  **ranks are trustworthy, magnitudes less so**.
-- **A self-corpus leak surfaced — now fixed.** Code 321
-  (`www.codebiology.org/conferences/Guimaraes…`, an in-corpus Code Biology *conference*
-  document, not a primary paper) topped most criteria — it reads maximally in-register
-  because the poles are mined from that same corpus. `--recompute` now drops any
-  `codebiology.org` self-reference (`drop_self_references` / `is_corpus_self_reference`)
-  from the corpus (μ, ranking, report) and evicts its stale score rows; corpus is now
-  **219 papers**.
-- **Leverred controls — gap closed.** Control vectors are now persisted
-  (`control_vectors` table) via a cheap `--controls-only` GPU run (one model load, papers
-  untouched), so `--recompute` rescores the controls through the **same corpus geometry**
-  as the papers (`score_controls`), and `report.md` drops the pre-lever caveat. They
-  behave: `genetic_code_positive` +0.184 / +0.153 / +0.092 (positive on all three);
-  `deterministic_chemistry_negative` −0.025 / −0.194 / **−0.224** (most negative on
-  `arbitrariness`, the A3 prediction); arbitrariness separation 0.316 > the pre-lever
-  0.305.
-- **Remaining honest gap.** Spearman ρ is unchanged (+0.522 / +0.522 / n-a) — the
-  labelled-verdict subset is too small and imbalanced (`arbitrariness` has no positives)
-  to *measure* the improvement, so the levers' gain shows in the 428 ranks + control
-  separation, not in ρ.
+## 5. First useful result (2026-06-14) — ρ is now measurable
 
-### Findings — Run 1 contrastive (10-paper, 2026-06-14), the motivation for Run 2
-These are the **pre-lever, double-cosine** results; the three structural weaknesses here
-are what the four levers above target.
-- Controls behave: genetic-code reads positive on all three criteria; deterministic-
-  chemistry negative on all three and **most negative on `arbitrariness`**. The lone
-  `met` paper (code 428) tops every method on `two_worlds`/`adaptors` (Spearman ρ ≈ +0.52).
-- **The topicality halo (lever target):** 428 *also* tops `arbitrariness`, where its
-  verdict is `not_met` — `e` partly ranks "how genetic-code-flavoured" not "argues *this*
-  criterion." On the 20-paper DB the criteria axes are ~0.74 co-aligned with the shared
-  direction; `--shared-strength 0.5` knocks 428's `arbitrariness` off the podium (rank 5)
-  without losing its legitimate `adaptors` (rank 2) / `two_worlds` (rank 6).
-- **full ≈ abstract ≈ chunk** (identical ρ) — granularity is not where signal hides.
-- Absolute `e` is small (±0.05) and pole-pair cosines high (poles overlap) — the
-  corpus-mined poles + centring/whitening aim to widen this before magnitudes are trusted.
+The embedding corpus is **219 papers** (after dropping the in-corpus self-reference).
+Previously only the 10-paper seed carried verdicts, so ρ was driven by one `met` paper and
+`arbitrariness` had **zero positives → undefined**. Backfilling LLM verdicts for the whole
+corpus (`judge_corpus.py`; **217 / 219** judged, 2 failed PDF extraction, ignored) gives
+real variation in every criterion, so **ρ(e, verdict_ordinal) is measurable for the first
+time** — the prior "honest gap."
 
-## Code development rules
-1. **Testing:** For any new functionality or changes to existing functionality always write or expand code using TDD. Write a failing test first, then the feature or change
-2. **Language** Always write in pythonic readable python and prefer numpy for data management
-3. **Logging** Always use pythonic logging and choose DEBUG, INFO, levels suitably depending on criticality and informationality of the code
-4. **Commit cadence** Pause and commit after each completed task (one logical unit of work). Keep commits small and self-contained; do not batch multiple tasks into one commit.
+Verdict distribution (217 labelled):
 
-### ⚠️ Deferred revert (PROJECT END)
-The production `llama-server` (Home Assistant voice agent) is **OFFLINE** — the
-3090 Ti was freed for embedding. Restore **at project end only**:
+| criterion | met | unclear | not_met |
+|---|---|---|---|
+| two_worlds    | 17 | 9  | 191 |
+| adaptors      | 12 | 12 | 193 |
+| arbitrariness | 2  | 17 | 198 |
+
+Spearman ρ(e, verdict_ordinal):
+
+| criterion | full | abstract | chunk |
+|---|---|---|---|
+| two_worlds    | +0.397 | +0.389 | +0.409 |
+| adaptors      | +0.265 | +0.293 | +0.310 |
+| arbitrariness | +0.123 | +0.081 | +0.149 |
+
+**Read:** the embedding axis tracks the verdict direction positively on all three
+criteria — strongest on `two_worlds` (most concrete), weakest on `arbitrariness` (subtlest,
+still only 2 positives → directional, not precise). `chunk` edges out `full`/`abstract`
+everywhere. Pole widths still overlap (`within`: `arbitrariness` best-separated), so
+**ranks are trustworthy, absolute magnitudes less so**.
+
+## 6. ⚠️ Major caveats (the verdicts are not ground truth)
+
+The ρ above measures agreement between two imperfect axes, not correctness. The verdicts
+are synthetic from comparatively weak models and have **not** been validated against a gold
+set:
+- **Poor calibration** — confidences cluster at 0.95–1.0 with very few positives; the
+  `confidence` field carries no usable gradation (which is *why* the embedding axis exists).
+- **False positives/negatives** — the prompts read too literally, latching onto an isolated
+  sentence rather than the sentence in the context of its paragraph. More contextual
+  understanding is needed.
+- **Next quality step:** re-tune the judge prompts for paragraph-level context, then a
+  single higher-quality run sending **all three** criteria to Nemotron (≈ $9). A gold-set
+  κ/F1 validation of the verdict backbone remains future work.
+- **Backlog:** refined ranking via a cross-encoder over the top candidates.
+
+## 7. Development, testing & reporting rules
+
+1. **TDD** — for any new or changed functionality, write a failing test first, then the
+   change. The suite is **162 tests, fully offline** (fake encoder, no GPU/DB needed).
+2. **Language** — pythonic, readable; prefer numpy for data management.
+3. **Logging** — pythonic `logging`, DEBUG/INFO chosen by criticality.
+4. **Commit cadence** — pause and commit after each completed logical unit; small,
+   self-contained commits. End commit messages with
+   `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+5. **Spend safety** — paid (Nemotron) work checkpoints to `sample_verdicts.jsonl` per paper
+   (resumable APPEND) **before** MySQL persistence; never delete the checkpoint.
+6. **Secrets** — `.env` is gitignored and never committed; never print API keys.
+
+### ⚠️ Deferred revert (PROJECT END only)
+The production `llama-server` (Home Assistant voice agent) is **OFFLINE** — the 3090 Ti was
+freed for this project's GPU/judging work. Restore **only at project end**:
 `cp ~/start_llama.prod.bak ~/start_llama.sh && sudo systemctl restart llama-server`.
-
+(Operational detail in `@environment_notes.md`.)

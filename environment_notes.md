@@ -2,6 +2,40 @@
 
 Reference for operating the infrastructure. Not needed for normal code editing.
 
+### Critical environment assumptions (hard-won)
+- **GPU pinning:** the 3090 Ti is **GPU index 2** under
+  `CUDA_DEVICE_ORDER=PCI_BUS_ID`. The two GTX 1080 Tis are sm_61, **unsupported** by
+  torch 2.8 — always run with `CUDA_VISIBLE_DEVICES=2`.
+- **VRAM ceiling → token cap:** a **32k-token forward pass OOMs** 27B/4-bit on the
+  24 GB card (a 115k-char paper at 32k tokens fails; ~23k tokens used 20.8 GB).
+  The `full`/`abstract` methods are therefore capped at **`--max-seq 16384`**, and the
+  run sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` + `torch.cuda.empty_cache()`
+  per doc. `full` thus embeds the first ~16k tokens of long papers; `chunk` gives full
+  coverage. The 8192-token chunk windows are proven to fit.
+- **Dependency pins on asushimu:** `peft>=0.11` (the bundled `0.4.0.dev0` lacks
+  `PeftModelForFeatureExtraction` that ST 5.x imports), `numpy<2` (ABI), `pyarrow<17`.
+- **Run logging:** each run logs total embeds per method up front, then per doc a
+  stable `id=<pdf-stem>`, `[doc i/N]`, and a running `done/total` per method.
+
+### MySQL (system of record for the embedding/verdict pipeline)
+- Runs on **asushimu** (conda `mysqld`, data dir `asushimu:/nvme/mysql/data`), DB
+  **`codebiology`**. `db.py` owns the schema and connects via `db.connect()`.
+- Connection params live in the gitignored **`.env`**
+  (`DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASS`) — **never commit `.env`**. The driver
+  host reaches it over the LAN; loaded by `run_sample.load_env()`.
+- The GPU host returns a transient `embed_out.json` purely as transport; the driver
+  loads it into MySQL and deletes it. Vectors are stored as **float32 little-endian
+  bytes** in `LONGBLOB` columns.
+
+### Harrier embedder runtime (asushimu 3090 Ti)
+- Model `microsoft/harrier-oss-v1-27b` at `/data/vllm/harrier-oss-v1-27b` (Gemma3-27B
+  decoder-only embedder, 5376-dim, MIT). Loaded via sentence-transformers in **4-bit**
+  (bitsandbytes nf4, bf16 compute, ≈13.5 GB) — bf16 would be ~54 GB.
+- Pin `CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=2`; `--max-seq 16384` (see VRAM
+  cap above). `embed_independent.py` drives `run_harrier_embed.py` over SSH to this host.
+
+Old info:
+
 ## asushimu server
 
 - CPU: AMD Ryzen Threadripper 1950X (16c/32t)
