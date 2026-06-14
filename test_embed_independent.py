@@ -1,0 +1,56 @@
+"""Offline tests for embed_independent.py pure helpers (no GPU, no MySQL)."""
+
+import embed_independent as ei
+
+
+def _pool(n):
+    return [{"code_number": str(i), "pdf_path": f"pdfs/p{i}.pdf"} for i in range(n)]
+
+
+def test_sample_extra_papers_excludes_existing_and_is_seed_deterministic():
+    pool = _pool(10)
+    existing = {"pdfs/p0.pdf", "pdfs/p1.pdf"}
+    a = ei.sample_extra_papers(pool, existing, n=3, seed=42)
+    b = ei.sample_extra_papers(pool, existing, n=3, seed=42)
+    # same seed -> identical selection (reproducible runs)
+    assert [p["pdf_path"] for p in a] == [p["pdf_path"] for p in b]
+    assert len(a) == 3
+    # never re-picks a paper that already has a verdict
+    assert all(p["pdf_path"] not in existing for p in a)
+    # carries the code id so it can be keyed in doc_vectors
+    assert all("code_number" in p for p in a)
+
+
+def test_sample_extra_papers_caps_at_available():
+    pool = [{"code_number": "1", "pdf_path": "pdfs/a.pdf"}]
+    # the only candidate is excluded -> nothing left, even though n=5 requested
+    assert ei.sample_extra_papers(pool, {"pdfs/a.pdf"}, n=5, seed=1) == []
+    # n larger than the pool returns the whole (shuffled) pool, no error
+    assert len(ei.sample_extra_papers(_pool(3), set(), n=99, seed=1)) == 3
+
+
+def test_sample_extra_papers_different_seeds_differ():
+    pool = _pool(20)
+    a = [p["pdf_path"] for p in ei.sample_extra_papers(pool, set(), 5, seed=1)]
+    b = [p["pdf_path"] for p in ei.sample_extra_papers(pool, set(), 5, seed=2)]
+    assert a != b
+
+
+def test_sample_extra_papers_zero_returns_empty():
+    assert ei.sample_extra_papers(_pool(5), set(), n=0, seed=1) == []
+
+
+def test_build_pool_keeps_only_on_disk_and_dedupes(tmp_path, monkeypatch):
+    # two rows share a DOI (same pdf path); a third has no file on disk
+    rows = [
+        {"code_number": "10", "url": "https://doi.org/10.1038/x"},
+        {"code_number": "11", "url": "https://doi.org/10.1038/x"},   # dup path
+        {"code_number": "12", "url": "https://doi.org/10.1038/y"},   # missing file
+    ]
+    pdf_dir = tmp_path / "pdfs"
+    pdf_dir.mkdir()
+    monkeypatch.setattr(ei, "read_rows", lambda csv_path: iter(rows))
+    (pdf_dir / "10.1038_x.pdf").write_bytes(b"%PDF-1.4")
+    pool = ei.build_pool("ignored.csv", str(pdf_dir))
+    # one entry: deduped by path, missing-file row dropped, first code wins
+    assert pool == [{"code_number": "10", "pdf_path": str(pdf_dir / "10.1038_x.pdf")}]

@@ -28,6 +28,7 @@ import datetime
 import json
 import logging
 import os
+import random
 import subprocess
 
 import numpy as np
@@ -35,6 +36,7 @@ import numpy as np
 import db
 import pdf_text
 from criteria_judge import verdict_ordinal
+from download_pdfs import output_path_for, read_rows
 from embed_score import CRITERIA, load_prototypes
 
 logging.basicConfig(level=logging.INFO,
@@ -52,6 +54,35 @@ def load_verdicts(path):
             if line:
                 recs.append(json.loads(line))
     return recs
+
+
+def build_pool(csv_path, pdf_dir):
+    """Every downloaded paper as ``{code_number, pdf_path}`` — one per PDF actually on
+    disk, deduped by path (the first code that cites a shared DOI wins). This is the
+    pool the ``--extra-sample`` draw is taken from."""
+    pool, seen = [], set()
+    for row in read_rows(csv_path):
+        path = output_path_for(row, pdf_dir)
+        if path in seen or not os.path.exists(path):
+            continue
+        seen.add(path)
+        pool.append({"code_number": row["code_number"], "pdf_path": path})
+    return pool
+
+
+def sample_extra_papers(pool, existing_pids, n, seed=0):
+    """Deterministically draw up to ``n`` papers from ``pool`` whose ``pdf_path`` is not
+    already in ``existing_pids`` (the verdict set).
+
+    The draw is seeded so a run is reproducible. The returned recs carry only
+    ``code_number`` + ``pdf_path`` — **no verdict criteria** — so they widen the embedded
+    corpus (a richer basis for centring/whitening μ and a broader on-axis spread) without
+    entering the ρ(e, verdict) calculation, which keys on the labelled papers only."""
+    existing = set(existing_pids)
+    candidates = [p for p in pool if p["pdf_path"] not in existing]
+    rng = random.Random(seed)
+    rng.shuffle(candidates)
+    return candidates[: max(n, 0)]
 
 
 def build_input(recs, prototypes, controls, char_budget):
@@ -255,6 +286,16 @@ def main():
     ap.add_argument("--csv", default="embedding_scores.csv")
     ap.add_argument("--md", default="report.md")
     ap.add_argument("--char-budget", type=int, default=120000)
+    ap.add_argument("--extra-sample", type=int, default=0,
+                    help="randomly draw this many UNLABELLED papers from the downloaded "
+                         "corpus (in addition to the verdict set) to widen the embedded "
+                         "basis for centring/whitening; they don't enter ρ(e, verdict)")
+    ap.add_argument("--seed", type=int, default=0,
+                    help="RNG seed for --extra-sample (reproducible draw)")
+    ap.add_argument("--codes-csv", default="biological_codes.csv",
+                    help="source for the --extra-sample pool (code -> URL -> pdf path)")
+    ap.add_argument("--pdf-dir", default="pdfs",
+                    help="directory of downloaded PDFs for the --extra-sample pool")
     ap.add_argument("--max-seq", type=int, default=16384,
                     help="token cap for full/abstract single-pass embeds; 32k OOMs "
                          "27B/4-bit on a 24 GB card")
@@ -273,6 +314,14 @@ def main():
 
     recs = load_verdicts(args.verdicts)
     log.info("loaded %d prior verdicts", len(recs))
+
+    if args.extra_sample > 0:
+        pool = build_pool(args.codes_csv, args.pdf_dir)
+        extra = sample_extra_papers(pool, {r["pdf_path"] for r in recs},
+                                    args.extra_sample, args.seed)
+        recs += extra
+        log.info("drew %d extra unlabelled papers from a pool of %d (seed=%d); "
+                 "%d papers total to embed", len(extra), len(pool), args.seed, len(recs))
 
     proto_raw = json.load(open(args.prototypes, encoding="utf-8"))
     prototypes = load_prototypes(args.prototypes)
