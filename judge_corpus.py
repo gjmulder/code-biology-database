@@ -28,10 +28,16 @@ log = logging.getLogger("judge_corpus")
 
 
 def null_verdict_pdf_paths(conn):
-    """The distinct corpus papers whose verdict is still NULL (need judging)."""
+    """The distinct corpus papers with no verdict yet (need judging).
+
+    Verdicts are now normalised into the run-agnostic ``verdicts`` table, so an unjudged
+    paper is one present in the baseline ``embedding_scores`` but absent from
+    ``verdicts``."""
     with conn.cursor() as c:
-        c.execute("SELECT DISTINCT pdf_path FROM embedding_scores "
-                  "WHERE verdict IS NULL")
+        c.execute("SELECT DISTINCT es.pdf_path FROM embedding_scores es "
+                  "LEFT JOIN verdicts v "
+                  "  ON es.code_number=v.code_number AND es.pdf_path=v.pdf_path "
+                  "WHERE v.pdf_path IS NULL")
         return {p for (p,) in c.fetchall()}
 
 
@@ -89,14 +95,14 @@ def main():
         import json
         records = [json.loads(l) for l in open(args.checkpoint, encoding="utf-8") if l.strip()]
         n = db.update_verdicts(conn, records)
-        log.info("persisted %d (paper,criterion) verdicts to MySQL embedding_scores "
+        log.info("persisted %d (paper,criterion) verdicts to MySQL `verdicts` "
                  "from %d checkpoint records", n, len(records))
 
         with conn.cursor() as c:
-            c.execute("SELECT COUNT(DISTINCT pdf_path) FROM embedding_scores "
+            c.execute("SELECT COUNT(DISTINCT pdf_path) FROM verdicts "
                       "WHERE verdict IS NOT NULL")
             labelled = c.fetchone()[0]
-        log.info("embedding_scores now has %d papers with a verdict", labelled)
+        log.info("`verdicts` now has %d papers with a verdict", labelled)
     finally:
         conn.close()
 

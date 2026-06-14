@@ -54,19 +54,19 @@ def test_scores_to_rows_grain_and_keying():
     assert len(rows) == 9
     # leading column is the code id
     assert all(r[0] == 233 for r in rows)
-    # tuple shape: (code, pid, method, criterion, e, verdict, confidence, model, ts)
+    # tuple shape: (code, pid, method, criterion, e, model, run_ts, run) — verdict/
+    # confidence are no longer here (normalised into the run-agnostic `verdicts` table).
     full_tw = next(r for r in rows if r[2] == "full" and r[3] == "two_worlds")
     assert full_tw[1] == "pdfs/a.pdf"
     assert full_tw[4] == 0.2
-    assert full_tw[5] == "met" and full_tw[6] == 0.9
-    assert full_tw[7] == "harrier"
+    assert full_tw[5] == "harrier"            # embedding model
+    assert full_tw[6] == "2026-06-14 00:00:00"  # run_ts
+    assert full_tw[7] == "baseline"           # default run label
 
 
-def test_scores_to_rows_carries_each_methods_verdict_consistently():
-    rows = db.scores_to_rows(SAMPLE_OUT, RECS, run_ts="t")
-    # every row for adaptors carries the same not_met verdict regardless of method
-    adaptor_rows = [r for r in rows if r[3] == "adaptors"]
-    assert {r[5] for r in adaptor_rows} == {"not_met"}
+def test_scores_to_rows_run_label_overridable():
+    rows = db.scores_to_rows(SAMPLE_OUT, RECS, run_ts="t", run="gte-qwen2")
+    assert all(r[7] == "gte-qwen2" for r in rows)
 
 
 def test_pack_unpack_vec_roundtrips_as_float32():
@@ -82,8 +82,9 @@ def test_doc_vectors_to_rows_grain_and_chunk_indexing():
     rows = db.doc_vectors_to_rows(SAMPLE_OUT, RECS, run_ts="t")
     # full(1) + abstract(1) + chunk(2) = 4 vector rows for the one paper
     assert len(rows) == 4
-    # tuple shape: (code_number, pdf_path, method, chunk_idx, dim, vec_blob, run_ts)
+    # tuple shape: (code_number, pdf_path, method, chunk_idx, dim, vec_blob, run_ts, run)
     assert all(r[0] == 233 and r[1] == "pdfs/a.pdf" and r[4] == 3 for r in rows)
+    assert all(r[7] == "baseline" for r in rows)
     # single-vector methods sit at chunk_idx 0
     full = next(r for r in rows if r[2] == "full")
     assert full[3] == 0
@@ -96,10 +97,10 @@ def test_doc_vectors_to_rows_grain_and_chunk_indexing():
 
 def test_control_vectors_to_rows_grain():
     rows = db.control_vectors_to_rows(SAMPLE_OUT, run_ts="t")
-    # 2 controls; tuple shape (name, dim, vec_blob, run_ts)
+    # 2 controls; tuple shape (name, dim, vec_blob, run_ts, run)
     assert len(rows) == 2
     gc = next(r for r in rows if r[0] == "genetic_code_positive")
-    assert gc[1] == 3 and gc[3] == "t"
+    assert gc[1] == 3 and gc[3] == "t" and gc[4] == "baseline"
     assert np.allclose(db.unpack_vec(gc[2]), [0.1, 0.2, 0.3])
 
 
@@ -109,25 +110,27 @@ def test_control_vectors_to_rows_empty_when_absent():
 
 def test_pole_vectors_to_rows_grain():
     rows = db.pole_vectors_to_rows(SAMPLE_OUT, run_ts="t")
-    # 3 criteria x 2 poles = 6 rows; shape (criterion, pole, dim, vec_blob, run_ts)
+    # 3 criteria x 2 poles = 6 rows; shape (criterion, pole, dim, vec_blob, run_ts, run)
     assert len(rows) == 6
     pos_tw = next(r for r in rows if r[0] == "two_worlds" and r[1] == "pos")
-    assert pos_tw[2] == 3
+    assert pos_tw[2] == 3 and pos_tw[5] == "baseline"
     assert np.allclose(db.unpack_vec(pos_tw[3]), [1.0, 0.0, 0.0])
 
 
 def test_controls_and_poles_and_meta_rows():
     assert db.controls_to_rows(SAMPLE_OUT, "t") == [
-        ("genetic_code_positive", "two_worlds", 0.4, "t"),
-        ("genetic_code_positive", "adaptors", 0.4, "t"),
-        ("genetic_code_positive", "arbitrariness", 0.4, "t"),
+        ("genetic_code_positive", "two_worlds", 0.4, "t", "baseline"),
+        ("genetic_code_positive", "adaptors", 0.4, "t", "baseline"),
+        ("genetic_code_positive", "arbitrariness", 0.4, "t", "baseline"),
     ]
     poles = db.poles_to_rows(SAMPLE_OUT, "t")
-    assert ("pos", "two_worlds~adaptors", 0.2, "t") in poles
-    assert ("neg", "two_worlds~adaptors", 0.3, "t") in poles
+    assert ("pos", "two_worlds~adaptors", 0.2, "t", "baseline") in poles
+    assert ("neg", "two_worlds~adaptors", 0.3, "t", "baseline") in poles
+    # meta_rows tuples are (k, v, run); the run column is absorbed by `*_`.
     meta = dict((k, v) for k, v, *_ in db.meta_rows(SAMPLE_OUT, "t"))
     assert meta["model"] == "harrier"
     assert meta["chunk_size"] == "8192"
+    assert all(r[2] == "baseline" for r in db.meta_rows(SAMPLE_OUT, "t"))
 
 
 def test_recompute_score_rows_carry_code_and_e_only():
@@ -139,17 +142,17 @@ def test_recompute_score_rows_carry_code_and_e_only():
     }
     codes = {"pdfs/a.pdf": 233}
     rows = db.recompute_score_rows(scores, codes, run_ts="t")
-    # (code_number, pdf_path, method, criterion, e, run_ts) — for an e-only upsert
-    assert (233, "pdfs/a.pdf", "full", "two_worlds", 0.5, "t") in rows
-    assert (233, "pdfs/a.pdf", "chunk", "adaptors", 0.1, "t") in rows
+    # (code_number, pdf_path, method, criterion, e, run_ts, run) — for an e-only upsert
+    assert (233, "pdfs/a.pdf", "full", "two_worlds", 0.5, "t", "baseline") in rows
+    assert (233, "pdfs/a.pdf", "chunk", "adaptors", 0.1, "t", "baseline") in rows
     assert len(rows) == 4
     assert all(isinstance(r[4], float) for r in rows)
 
 
 def test_within_rows_store_pole_width_under_within():
     rows = db.within_rows({"two_worlds": 0.77, "adaptors": 0.64}, run_ts="t")
-    assert ("within", "two_worlds", 0.77, "t") in rows
-    assert ("within", "adaptors", 0.64, "t") in rows
+    assert ("within", "two_worlds", 0.77, "t", "baseline") in rows
+    assert ("within", "adaptors", 0.64, "t", "baseline") in rows
 
 
 def test_verdict_update_rows_one_row_per_paper_criterion():
@@ -162,13 +165,14 @@ def test_verdict_update_rows_one_row_per_paper_criterion():
             "arbitrariness": {"verdict": "unclear", "confidence": 0.7},
         },
     }]
-    rows = db.verdict_update_rows(records)
-    # tuple order matches `SET verdict=%s, confidence=%s WHERE code_number=%s
-    # AND pdf_path=%s AND criterion=%s` — one row per (paper, criterion), method-agnostic
-    # (the UPDATE touches every method row), code_number coerced to int.
-    assert ("met", 0.95, 428, "pdfs/x.pdf", "two_worlds") in rows
-    assert ("not_met", 1.0, 428, "pdfs/x.pdf", "adaptors") in rows
-    assert ("unclear", 0.7, 428, "pdfs/x.pdf", "arbitrariness") in rows
+    rows = db.verdict_update_rows(records, run_ts="t")
+    # repointed at the run-agnostic `verdicts` table: one row per (paper, criterion),
+    # tuple `(code_number, pdf_path, criterion, verdict, confidence, model, run_ts)`.
+    # No method fan-out, no run, no embedding model. The judge model isn't carried on the
+    # record so `model` is None; code_number is coerced to int.
+    assert (428, "pdfs/x.pdf", "two_worlds", "met", 0.95, None, "t") in rows
+    assert (428, "pdfs/x.pdf", "adaptors", "not_met", 1.0, None, "t") in rows
+    assert (428, "pdfs/x.pdf", "arbitrariness", "unclear", 0.7, None, "t") in rows
     assert len(rows) == 3
 
 
@@ -177,8 +181,8 @@ def test_verdict_update_rows_skips_criteria_without_a_verdict():
         "code_number": "21", "pdf_path": "pdfs/y.pdf",
         "criteria": {
             "two_worlds": {"verdict": "met", "confidence": 0.9},
-            "adaptors": {},  # no verdict emitted -> not updated (don't clobber)
+            "adaptors": {},  # no verdict emitted -> not written (don't clobber)
         },
     }]
-    rows = db.verdict_update_rows(records)
-    assert rows == [("met", 0.9, 21, "pdfs/y.pdf", "two_worlds")]
+    rows = db.verdict_update_rows(records, run_ts="t")
+    assert rows == [(21, "pdfs/y.pdf", "two_worlds", "met", 0.9, None, "t")]
