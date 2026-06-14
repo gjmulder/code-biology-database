@@ -220,6 +220,9 @@ __marimo__/
 # Downloaded PDFs (large binaries, regenerable via download_pdfs.py)
 pdfs/
 
+# Seminal-text corpus (large reference-literature binaries, not source code)
+Code_Biology_PDFs/
+
 # Transient embedding transport artifacts (MySQL is the system of record)
 embed_in.json
 embed_out.json
