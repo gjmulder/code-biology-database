@@ -89,6 +89,48 @@ def test_real_prototypes_load_with_three_criteria():
         assert proto[c]["instruct_pos"] and proto[c]["instruct_neg"]
 
 
+# --- axis-projection contrast (Task 3) ------------------------------------
+
+def test_axis_score_antipodal_poles_match_pos_axis():
+    # pos↔neg span a single axis; doc on +pos → +1, on neg → -1, orthogonal → 0
+    pole = {"pos": [1, 0, 0], "neg": [-1, 0, 0]}
+    assert np.isclose(es.axis_score([1, 0, 0], pole), 1.0)
+    assert np.isclose(es.axis_score([-1, 0, 0], pole), -1.0)
+    assert np.isclose(es.axis_score([0, 1, 0], pole), 0.0)
+
+
+def test_axis_score_orthogonal_poles_project_onto_difference_axis():
+    # axis = normalize(p̂ − n̂) = normalize([1,-1,0]); doc==pos projects to 1/√2
+    pole = {"pos": [1, 0, 0], "neg": [0, 1, 0]}
+    assert np.isclose(es.axis_score([1, 0, 0], pole), 1 / np.sqrt(2))
+    assert np.isclose(es.axis_score([0, 1, 0], pole), -1 / np.sqrt(2))
+    assert np.isclose(es.axis_score([1, -1, 0], pole), 1.0)  # doc == the axis itself
+
+
+def test_axis_score_monotone_from_neg_to_pos():
+    # rotating the doc from the neg pole toward the pos pole strictly raises the score
+    pole = {"pos": [1, 0, 0], "neg": [-1, 0, 0]}
+    angles = np.linspace(np.pi, 0.0, 9)   # π (==neg) → 0 (==pos)
+    scores = [es.axis_score([np.cos(a), np.sin(a), 0], pole) for a in angles]
+    assert all(b > a for a, b in zip(scores, scores[1:]))
+
+
+def test_axis_score_divides_out_pole_width():
+    # axis_score == contrastive_score / ‖p̂ − n̂‖ — narrow (overlapping) poles are
+    # amplified back onto a common projection scale instead of being compressed.
+    narrow = {"pos": [1, 0, 0], "neg": es._l2([1, 0.2, 0]).tolist()}
+    doc = [0.3, 0.9, 0.1]
+    width = float(np.linalg.norm(es._l2(narrow["pos"]) - es._l2(narrow["neg"])))
+    assert np.isclose(es.axis_score(doc, narrow),
+                      es.contrastive_score(doc, narrow) / width)
+
+
+def test_axis_score_degenerate_poles_are_zero():
+    # p̂ == n̂ → zero axis → 0.0 (no blow-up from the 1e-12 norm floor)
+    pole = {"pos": [1, 0, 0], "neg": [1, 0, 0]}
+    assert es.axis_score([0.5, 0.5, 0.7], pole) == 0.0
+
+
 # --- chunking methods (full / abstract / 8K-overlap) ----------------------
 
 def test_token_windows_short_sequence_is_single_window():

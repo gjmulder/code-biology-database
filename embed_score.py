@@ -81,6 +81,30 @@ def score_papers(doc_vecs, poles):
             for pid, v in doc_vecs.items()}
 
 
+def axis_vector(pole):
+    """Unit difference axis pointing from the negative toward the positive pole.
+
+    ``a = normalize(p̂ − n̂)`` on the L2-normalised poles. Degenerate poles (p̂ == n̂)
+    collapse to a zero vector (the 1e-12 norm floor keeps it zero rather than blowing
+    up)."""
+    return _l2(_l2(pole["pos"]) - _l2(pole["neg"]))
+
+
+def axis_score(doc_vec, pole):
+    """Project the (L2-normalised) document onto the pos↔neg **difference axis**.
+
+    ``axis_score = normalize(p̂ − n̂) · normalize(doc)`` — the cosine between the
+    document and the criterion's polar axis, in ``[-1, 1]``.
+
+    This is the Task-3 replacement for the double-cosine :func:`contrastive_score`.
+    They share a direction but differ by the *pole width*: ``contrastive_score`` is
+    ``doc·(p̂ − n̂)``, which scales with ``‖p̂ − n̂‖`` and so **compresses** a criterion
+    whose poles overlap (narrow width). Dividing by that width (i.e. projecting onto the
+    *unit* axis) puts every criterion on a common scale, so a narrow-pole criterion is
+    no longer penalised relative to a wide-pole one. Degenerate poles score ``0.0``."""
+    return float(_l2(doc_vec) @ axis_vector(pole))
+
+
 # --- chunking-method helpers (full / abstract / 8K-overlap) ----------------
 #
 # The independent embedding axis is computed three ways per paper, each fed to the
