@@ -1,11 +1,13 @@
 """Offline tests for db.py pure transforms (no live MySQL needed)."""
 
+import numpy as np
+
 import db
 
 
 SAMPLE_OUT = {
     "model": "harrier",
-    "dim": 5376,
+    "dim": 3,
     "methods": ["full", "abstract", "chunk"],
     "chunk_size": 8192,
     "chunk_overlap": 4096,
@@ -15,6 +17,18 @@ SAMPLE_OUT = {
             "abstract": {"two_worlds": 0.1, "adaptors": 0.0, "arbitrariness": 0.0},
             "chunk": {"two_worlds": 0.3, "adaptors": 0.1, "arbitrariness": 0.2},
         }
+    },
+    "doc_vectors": {
+        "pdfs/a.pdf": {
+            "full": [0.1, 0.2, 0.3],
+            "abstract": [0.4, 0.5, 0.6],
+            "chunk": [[0.7, 0.8, 0.9], [1.0, 1.1, 1.2]],
+        }
+    },
+    "pole_vectors": {
+        "two_worlds": {"pos": [1.0, 0.0, 0.0], "neg": [0.0, 1.0, 0.0]},
+        "adaptors": {"pos": [0.0, 0.0, 1.0], "neg": [1.0, 1.0, 0.0]},
+        "arbitrariness": {"pos": [1.0, 1.0, 1.0], "neg": [-1.0, 0.0, 0.0]},
     },
     "controls": {"genetic_code_positive": {"two_worlds": 0.4, "adaptors": 0.4,
                                            "arbitrariness": 0.4}},
@@ -51,6 +65,40 @@ def test_scores_to_rows_carries_each_methods_verdict_consistently():
     # every row for adaptors carries the same not_met verdict regardless of method
     adaptor_rows = [r for r in rows if r[3] == "adaptors"]
     assert {r[5] for r in adaptor_rows} == {"not_met"}
+
+
+def test_pack_unpack_vec_roundtrips_as_float32():
+    v = [0.1, -0.2, 0.3]
+    blob = db.pack_vec(v)
+    assert isinstance(blob, (bytes, bytearray))
+    out = db.unpack_vec(blob)
+    assert out.dtype == np.float32
+    assert np.allclose(out, np.asarray(v, dtype=np.float32))
+
+
+def test_doc_vectors_to_rows_grain_and_chunk_indexing():
+    rows = db.doc_vectors_to_rows(SAMPLE_OUT, RECS, run_ts="t")
+    # full(1) + abstract(1) + chunk(2) = 4 vector rows for the one paper
+    assert len(rows) == 4
+    # tuple shape: (code_number, pdf_path, method, chunk_idx, dim, vec_blob, run_ts)
+    assert all(r[0] == 233 and r[1] == "pdfs/a.pdf" and r[4] == 3 for r in rows)
+    # single-vector methods sit at chunk_idx 0
+    full = next(r for r in rows if r[2] == "full")
+    assert full[3] == 0
+    assert np.allclose(db.unpack_vec(full[5]), [0.1, 0.2, 0.3])
+    # chunk vectors are indexed 0..n-1 in order
+    chunks = sorted((r for r in rows if r[2] == "chunk"), key=lambda r: r[3])
+    assert [r[3] for r in chunks] == [0, 1]
+    assert np.allclose(db.unpack_vec(chunks[1][5]), [1.0, 1.1, 1.2])
+
+
+def test_pole_vectors_to_rows_grain():
+    rows = db.pole_vectors_to_rows(SAMPLE_OUT, run_ts="t")
+    # 3 criteria x 2 poles = 6 rows; shape (criterion, pole, dim, vec_blob, run_ts)
+    assert len(rows) == 6
+    pos_tw = next(r for r in rows if r[0] == "two_worlds" and r[1] == "pos")
+    assert pos_tw[2] == 3
+    assert np.allclose(db.unpack_vec(pos_tw[3]), [1.0, 0.0, 0.0])
 
 
 def test_controls_and_poles_and_meta_rows():

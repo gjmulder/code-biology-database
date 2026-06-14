@@ -14,6 +14,7 @@ runs against the live server on asushimu.
 import os
 import pathlib
 
+import numpy as np
 import pymysql
 
 CRITERIA = ["two_worlds", "adaptors", "arbitrariness"]
@@ -58,7 +59,42 @@ DDL = [
         PRIMARY KEY (k)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
+    # Raw document embeddings kept so the contrast math (centring, whitening, axis
+    # projection, orthogonalization) can run **offline** from the DB without a GPU
+    # re-embed. full/abstract are one vector (chunk_idx 0); chunk keeps every window.
+    """
+    CREATE TABLE IF NOT EXISTS doc_vectors (
+        code_number  INT          NOT NULL,
+        pdf_path     VARCHAR(255) NOT NULL,
+        method       VARCHAR(16)  NOT NULL,   -- full | abstract | chunk
+        chunk_idx    INT          NOT NULL,   -- 0 for full/abstract; 0..n for chunk
+        dim          INT          NOT NULL,
+        vec          LONGBLOB     NOT NULL,   -- float32 little-endian bytes
+        run_ts       DATETIME,
+        PRIMARY KEY (code_number, pdf_path, method, chunk_idx)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS pole_vectors (
+        criterion  VARCHAR(32) NOT NULL,
+        pole       VARCHAR(8)  NOT NULL,   -- pos | neg
+        dim        INT         NOT NULL,
+        vec        LONGBLOB    NOT NULL,
+        run_ts     DATETIME,
+        PRIMARY KEY (criterion, pole)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
 ]
+
+
+def pack_vec(v):
+    """Pack a float sequence into compact float32 little-endian bytes for BLOB storage."""
+    return np.asarray(v, dtype="<f4").tobytes()
+
+
+def unpack_vec(blob):
+    """Inverse of :func:`pack_vec` — a 1-D float32 ``np.ndarray``."""
+    return np.frombuffer(blob, dtype="<f4")
 
 
 def load_env(path=".env"):
@@ -124,6 +160,32 @@ def poles_to_rows(out, run_ts):
             for pair, cos in pairs.items()]
 
 
+def doc_vectors_to_rows(out, recs, run_ts):
+    """``out['doc_vectors'][pid][method] = vec | [vec, ...]`` → row tuples
+    ``(code_number, pdf_path, method, chunk_idx, dim, vec_blob, run_ts)``.
+
+    full/abstract carry a single vector (stored at ``chunk_idx`` 0); chunk carries a
+    list of per-window vectors stored at ``chunk_idx`` 0..n-1 in order."""
+    by_pid = {r["pdf_path"]: r for r in recs}
+    rows = []
+    for pid, methods in out.get("doc_vectors", {}).items():
+        code = by_pid.get(pid, {}).get("code_number")
+        for method, vecs in methods.items():
+            # normalise to a list of vectors so full/abstract/chunk share one path
+            seq = vecs if (vecs and isinstance(vecs[0], (list, tuple))) else [vecs]
+            for idx, v in enumerate(seq):
+                rows.append((code, pid, method, idx, len(v), pack_vec(v), run_ts))
+    return rows
+
+
+def pole_vectors_to_rows(out, run_ts):
+    """``out['pole_vectors'][criterion][pole] = vec`` → ``(criterion, pole, dim,
+    vec_blob, run_ts)`` rows."""
+    return [(crit, pole, len(v), pack_vec(v), run_ts)
+            for crit, poles in out.get("pole_vectors", {}).items()
+            for pole, v in poles.items()]
+
+
 def meta_rows(out, run_ts):
     return [(k, str(out.get(k))) for k in
             ("model", "dim", "use_4bit", "methods", "chunk_size", "chunk_overlap")
@@ -155,6 +217,21 @@ def store(conn, out, recs, run_ts):
             "INSERT INTO run_meta (k,v) VALUES (%s,%s) AS new "
             "ON DUPLICATE KEY UPDATE v=new.v",
             meta_rows(out, run_ts))
+        dv = doc_vectors_to_rows(out, recs, run_ts)
+        if dv:
+            c.executemany(
+                "INSERT INTO doc_vectors "
+                "(code_number,pdf_path,method,chunk_idx,dim,vec,run_ts) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s) AS new "
+                "ON DUPLICATE KEY UPDATE dim=new.dim, vec=new.vec, run_ts=new.run_ts",
+                dv)
+        pv = pole_vectors_to_rows(out, run_ts)
+        if pv:
+            c.executemany(
+                "INSERT INTO pole_vectors (criterion,pole,dim,vec,run_ts) "
+                "VALUES (%s,%s,%s,%s,%s) AS new "
+                "ON DUPLICATE KEY UPDATE dim=new.dim, vec=new.vec, run_ts=new.run_ts",
+                pv)
     conn.commit()
 
 

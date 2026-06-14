@@ -91,37 +91,46 @@ def plan_windows(papers, tokenizer, chunk_size, chunk_overlap):
 
 def score_paper_methods(doc_id, doc_idx, n_docs, full, abstract, windows,
                         encode, tokenizer, poles, progress):
-    """Return ``{method: {criterion: e}}`` for one paper across the three methods,
-    logging each method's progress against the per-method embed total.
+    """Return ``(scores, vectors)`` for one paper across the three methods.
 
-    ``progress`` is a mutable ``{"done": {method: int}, "total": {method: int}}``
-    carried across papers so the log shows a global ``done/total`` per method."""
+    ``scores`` is ``{method: {criterion: e}}``; ``vectors`` is ``{"full": vec,
+    "abstract": vec, "chunk": [vec, ...]}`` (raw document embeddings as plain float
+    lists) so the contrast math can be recomputed offline from the DB. Each method's
+    progress is logged against the per-method embed total. ``progress`` is a mutable
+    ``{"done": {method: int}, "total": {method: int}}`` carried across papers."""
     done, total = progress["done"], progress["total"]
     tag = f"[doc {doc_idx}/{n_docs} id={doc_id}]"
-    out = {}
+    out, vecs = {}, {}
 
-    out["full"] = _crit_scores(encode([full])[0], poles)
+    full_vec = encode([full])[0]
+    vecs["full"] = full_vec.tolist()
+    out["full"] = _crit_scores(full_vec, poles)
     done["full"] += 1
     log.info("%s full     embed %d/%d (%d chars)",
              tag, done["full"], total["full"], len(full))
 
-    out["abstract"] = _crit_scores(encode([abstract or ""])[0], poles)
+    abs_vec = encode([abstract or ""])[0]
+    vecs["abstract"] = abs_vec.tolist()
+    out["abstract"] = _crit_scores(abs_vec, poles)
     done["abstract"] += 1
     log.info("%s abstract embed %d/%d (%d chars)",
              tag, done["abstract"], total["abstract"], len(abstract or ""))
 
     chunk_texts = [tokenizer.decode(w) for w in windows]
     per_crit = {c: [] for c in poles}
+    chunk_vecs = []
     for wi, text in enumerate(chunk_texts, 1):
         vec = encode([text])[0]
+        chunk_vecs.append(vec.tolist())
         for c in poles:
             per_crit[c].append(embed_score.contrastive_score(vec, poles[c]))
         done["chunk"] += 1
         log.info("%s chunk    embed %d/%d (window %d/%d of this doc)",
                  tag, done["chunk"], total["chunk"], wi, len(chunk_texts))
+    vecs["chunk"] = chunk_vecs
     out["chunk"] = {c: embed_score.aggregate_chunks(per_crit[c]) for c in poles}
     log.info("%s done: full+abstract+%d chunks", tag, len(chunk_texts))
-    return out
+    return out, vecs
 
 
 def main():
@@ -161,12 +170,12 @@ def main():
              total["chunk"], sum(total.values()))
 
     import torch
-    scores = {}
+    scores, doc_vectors = {}, {}
     for idx, (pid, doc) in enumerate(papers.items(), 1):
         full = doc["full"] if isinstance(doc, dict) else doc
         abstract = doc.get("abstract", "") if isinstance(doc, dict) else ""
         doc_id = os.path.splitext(os.path.basename(pid))[0]
-        scores[pid] = score_paper_methods(
+        scores[pid], doc_vectors[pid] = score_paper_methods(
             doc_id, idx, n_docs, full, abstract, windows[pid],
             encode, tokenizer, poles, progress)
         torch.cuda.empty_cache()  # release per-doc activation memory before the next
@@ -180,8 +189,14 @@ def main():
         for name, text in controls.items():
             control_scores[name] = _crit_scores(encode([text])[0], poles)
 
+    # Raw vectors travel as plain float lists; the driver packs them to float32 BLOBs
+    # in MySQL so the contrast math can be recomputed offline (no GPU re-embed).
+    pole_vectors = {c: {"pos": poles[c]["pos"].tolist(),
+                        "neg": poles[c]["neg"].tolist()} for c in poles}
     out = {
         "scores": scores,
+        "doc_vectors": doc_vectors,
+        "pole_vectors": pole_vectors,
         "pole_separation": embed_score.pole_separation(poles),
         "controls": control_scores,
         "model": args.model,
