@@ -218,6 +218,43 @@ def recompute_score_rows(scores, codes, run_ts):
             for crit, e in cdict.items()]
 
 
+def verdict_update_rows(records):
+    """Judged ``criteria_judge`` records → tuples for a verdict-only UPDATE that
+    preserves the embedding ``e`` (already persisted by the structural run).
+
+    Each tuple is ``(verdict, confidence, code_number, pdf_path, criterion)`` matching
+    ``SET verdict=%s, confidence=%s WHERE code_number=%s AND pdf_path=%s AND
+    criterion=%s`` — method-agnostic, so the UPDATE writes the verdict onto every
+    method row (full/abstract/chunk) for that paper×criterion. Criteria with no
+    ``verdict`` are skipped so a missing judgment never clobbers an existing one."""
+    rows = []
+    for r in records:
+        code = int(r["code_number"])
+        pid = r["pdf_path"]
+        for crit, v in r.get("criteria", {}).items():
+            verdict = v.get("verdict")
+            if not verdict:
+                continue
+            rows.append((verdict, v.get("confidence"), code, pid, crit))
+    return rows
+
+
+def update_verdicts(conn, records):
+    """Upsert verdict/confidence onto existing ``embedding_scores`` rows (no e change).
+
+    Returns the number of (paper, criterion) verdicts written. Used to backfill the
+    LLM verdicts for the embedding corpus after judging, so ρ(e, verdict) is
+    measurable from the DB without re-embedding."""
+    rows = verdict_update_rows(records)
+    with conn.cursor() as c:
+        c.executemany(
+            "UPDATE embedding_scores SET verdict=%s, confidence=%s "
+            "WHERE code_number=%s AND pdf_path=%s AND criterion=%s",
+            rows)
+    conn.commit()
+    return len(rows)
+
+
 def within_rows(within, run_ts):
     """Centred pole widths → ``pole_separation`` rows under the ``within`` pole, one per
     criterion (``pair`` = criterion name)."""

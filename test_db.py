@@ -150,3 +150,35 @@ def test_within_rows_store_pole_width_under_within():
     rows = db.within_rows({"two_worlds": 0.77, "adaptors": 0.64}, run_ts="t")
     assert ("within", "two_worlds", 0.77, "t") in rows
     assert ("within", "adaptors", 0.64, "t") in rows
+
+
+def test_verdict_update_rows_one_row_per_paper_criterion():
+    # judged records (criteria_judge shape): verdict/confidence per criterion.
+    records = [{
+        "code_number": "428", "pdf_path": "pdfs/x.pdf",
+        "criteria": {
+            "two_worlds": {"verdict": "met", "confidence": 0.95},
+            "adaptors": {"verdict": "not_met", "confidence": 1.0},
+            "arbitrariness": {"verdict": "unclear", "confidence": 0.7},
+        },
+    }]
+    rows = db.verdict_update_rows(records)
+    # tuple order matches `SET verdict=%s, confidence=%s WHERE code_number=%s
+    # AND pdf_path=%s AND criterion=%s` — one row per (paper, criterion), method-agnostic
+    # (the UPDATE touches every method row), code_number coerced to int.
+    assert ("met", 0.95, 428, "pdfs/x.pdf", "two_worlds") in rows
+    assert ("not_met", 1.0, 428, "pdfs/x.pdf", "adaptors") in rows
+    assert ("unclear", 0.7, 428, "pdfs/x.pdf", "arbitrariness") in rows
+    assert len(rows) == 3
+
+
+def test_verdict_update_rows_skips_criteria_without_a_verdict():
+    records = [{
+        "code_number": "21", "pdf_path": "pdfs/y.pdf",
+        "criteria": {
+            "two_worlds": {"verdict": "met", "confidence": 0.9},
+            "adaptors": {},  # no verdict emitted -> not updated (don't clobber)
+        },
+    }]
+    rows = db.verdict_update_rows(records)
+    assert rows == [("met", 0.9, 21, "pdfs/y.pdf", "two_worlds")]
