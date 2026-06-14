@@ -162,7 +162,22 @@ e_c(d) = a_c⊥ · normalize( whiten(d − μ, B) )               # chunk window
 - `--shared-strength` (default `0.5`) — how hard each axis is orthogonalized against the
   shared register direction. `1.0` over-corrects; `0.5` removes the halo, keeps real signal.
 - `--whiten-k` (default `0`) — number of top PCs removed. `k≥1` hurt at small sample;
-  revisit at corpus scale.
+  **revisited at corpus scale (2026-06-14, `sweep_levers.py`) and the defaults stand** —
+  see the sweep note below.
+
+**Corpus-scale lever sweep (`sweep_levers.py`, free/offline, n=219).** The `(whiten-k,
+shared-strength)` grid `k∈{0,1,2,4,8,16} × strength∈{0,.25,.5,.75,1}` was rescored from the
+persisted vectors and ρ(e, verdict) tabulated per method × criterion (no GPU/spend/DB-write;
+the `(0, 0.5)` cell reproduces §5 exactly, proving same path as live `--recompute`). Findings:
+(1) **whitening is a dead end at corpus scale, not just at n=20** — `k≥1` collapses the two
+concrete criteria (k=2 drops two_worlds +0.41→+0.05); only the 2-positive `arbitrariness`
+mildly prefers high k, which is noise. (2) `strength=0.5` is near-optimal for two_worlds;
+only `adaptors` wanted lower (s=0 → +0.343 vs +0.310), inside the overfit margin. (3) No single
+cell wins all three, and **per-criterion argmax selection was rejected as overfitting** 217
+*synthetic, unreliable* labels (esp. arbitrariness's 2 positives). **Decision: keep
+`k=0, strength=0.5`.** The binding constraint is the model + pole separation (`within` still
+0.51–0.68), not the levers — the empirical license for the model-swap (§ next steps), not more
+lever tuning. `sweep_levers.py` is kept as the re-runnable diagnostic for a future model's vectors.
 
 ## 5. First useful result (2026-06-14) — ρ is now measurable
 
@@ -217,8 +232,7 @@ set:
 2. **Language** — pythonic, readable; prefer numpy for data management.
 3. **Logging** — pythonic `logging`, DEBUG/INFO chosen by criticality.
 4. **Commit cadence** — pause and commit after each completed logical unit; small,
-   self-contained commits. End commit messages with
-   `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+   self-contained commits. 
 5. **Spend safety** — paid (Nemotron) work checkpoints to `sample_verdicts.jsonl` per paper
    (resumable APPEND) **before** MySQL persistence; never delete the checkpoint.
 6. **Secrets** — `.env` is gitignored and never committed; never print API keys.
