@@ -245,10 +245,11 @@ set:
    (resumable APPEND) **before** MySQL persistence; never delete the checkpoint.
 6. **Secrets** — `.env` is gitignored and never committed; never print API keys.
 
-### ⚠️ Deferred revert (PROJECT END only)
-The production `llama-server` (Home Assistant voice agent) is **OFFLINE** — the 3090 Ti was
-freed for this project's GPU/judging work. Restore **only at project end**:
-`cp ~/start_llama.prod.bak ~/start_llama.sh && sudo systemctl restart llama-server`.
+### Production llama-server — RESTORED (2026-06-14)
+The production `llama-server` (Home Assistant voice agent) was restored at project pause:
+`cp ~/start_llama.prod.bak ~/start_llama.sh && sudo systemctl restart llama-server` (serving
+on :11434, active). The 3090 Ti is back on prod duty — **any future GPU/judging/embed work
+must first free it again** (`sudo systemctl stop llama-server`, do not leave prod down).
 (Operational detail in `@environment_notes.md`.)
 
 ## 8. Model swap shelved — likely at the measurement ceiling (2026-06-14)
