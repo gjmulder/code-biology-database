@@ -5,53 +5,6 @@ This project processes Code Biology data from `biological_codes.csv` (derived fr
 - **Expected Code Categories:** 435
 - **Expected References:** 2299
 
-## Current Status
-The extraction pipeline is implemented and passing its test suite.
-
-- **`extract_csv.py`** — parses the PDF directly with `pdfplumber` and emits
-  `biological_codes.csv` with columns `Code Number, Code Name, Paper Name, URL`.
-  Each citation in the source is a hyperlink whose anchor text is the full
-  reference, so hyperlink runs (not text splitting) are the extraction anchor.
-- **`test_extract.py`** — pytest suite (18 tests) covering code coverage,
-  contiguity, known per-code reference counts, URL validity, cross-page
-  continuation, and cross-row hyperlink-bleed regressions. Run with `pytest`.
-- **Output:** 2290 references across all **435** codes (within tolerance of the
-  quoted 2299). One reference (code 352, SeqCode) has citation text but no
-  hyperlink, so it carries an empty URL.
-
-### Key implementation notes
-- A code's citation list can spill across pages; the "current" code is carried
-  over page boundaries since continuation pages lack a left-column number.
-- A hyperlink rectangle sits a few points *above* its row's number digit, so row
-  bands are shifted up by `ANCHOR_SLACK` to stop a row stealing the next row's
-  first link.
-- Data-integrity logging: a `(YYYY)` year heuristic cross-checks the text
-  citation count against the URL count and logs a WARNING on mismatch.
-
-## PDF Availability
-`download_pdfs.py` fetches the full-text PDF for each reference. It derives a
-DOI from the URL, then tries, in order: the Crossref `application/pdf` link,
-every Unpaywall open-access location, and the landing page's
-`citation_pdf_url` meta tag. It is **legal-OA only** — no Sci-Hub or paywall
-circumvention. See `test_download_pdfs.py` (30 tests, fully offline).
-
-**Current state (last full run, from a non-institutional home network):**
-- **471 of 2240 unique references downloaded (~21%)** → `pdfs/` (gitignored, 2.1 GB;
-  regenerate with `python3 download_pdfs.py`). 49 duplicate citations share a DOI.
-- **1769 not retrievable**, listed with reasons in `failed_downloads.csv`:
-  - *Hard paywall, no OA copy* (the bulk) — Elsevier/ScienceDirect, Cell,
-    Nature-subscription, Springer, Wiley, OUP, AAAS/Science, T&F. No legal
-    source without a subscription.
-  - *CDN bot-blocked but actually OA* — e.g. MDPI (~56): Cloudflare returns 403
-    to scripted clients. Downloadable by hand in a browser.
-  - *PMC-only* — NCBI / Europe PMC block non-interactive PDF fetches from this
-    network (403 / HTML interstitial on every endpoint).
-
-**Resumability:** re-runs skip PDFs already on disk and reuse
-`crossref_cache.json` + `unpaywall_cache.json`, so effort is spent only on new
-attempts. Coverage would rise substantially from an institutional network
-(EZproxy/OpenAthens) or with an Unpaywall-plus-repository proxy.
-
 ## Code Biology Definitional Database
 Beyond the code/citation list, the repo holds a corpus of the foundational
 literature and the canonical web presence of the field. Together with
@@ -122,6 +75,45 @@ pages, 31 PDFs). Key content:
   plus calls for papers, programmes, and `conferences/pdf/` abstracts/papers.
 - **`videos.html`, `photogalleries.html`, `Immagini/`** — media archive.
 
+## Current Status
+The extraction pipeline is implemented and passing its test suite.
+
+- **`extract_csv.py`** — parses the PDF directly with `pdfplumber` and emits
+  `biological_codes.csv` with columns `Code Number, Code Name, Paper Name, URL`.
+  Each citation in the source is a hyperlink whose anchor text is the full
+  reference, so hyperlink runs (not text splitting) are the extraction anchor.
+- **`test_extract.py`** — pytest suite (18 tests) covering code coverage,
+  contiguity, known per-code reference counts, URL validity, cross-page
+  continuation, and cross-row hyperlink-bleed regressions. Run with `pytest`.
+- **Output:** 2290 references across all **435** codes (within tolerance of the
+  quoted 2299). One reference (code 352, SeqCode) has citation text but no
+  hyperlink, so it carries an empty URL.
+
+## PDF Availability
+`download_pdfs.py` fetches the full-text PDF for each reference. It derives a
+DOI from the URL, then tries, in order: the Crossref `application/pdf` link,
+every Unpaywall open-access location, and the landing page's
+`citation_pdf_url` meta tag. It is **legal-OA only** — no Sci-Hub or paywall
+circumvention. See `test_download_pdfs.py` (30 tests, fully offline).
+
+**Current state (last full run, from a non-institutional home network):**
+- **471 of 2240 unique references downloaded (~21%)** → `pdfs/` (gitignored, 2.1 GB;
+  regenerate with `python3 download_pdfs.py`). 49 duplicate citations share a DOI.
+- **1769 not retrievable**, listed with reasons in `failed_downloads.csv`:
+  - *Hard paywall, no OA copy* (the bulk) — Elsevier/ScienceDirect, Cell,
+    Nature-subscription, Springer, Wiley, OUP, AAAS/Science, T&F. No legal
+    source without a subscription.
+  - *CDN bot-blocked but actually OA* — e.g. MDPI (~56): Cloudflare returns 403
+    to scripted clients. Downloadable by hand in a browser.
+  - *PMC-only* — NCBI / Europe PMC block non-interactive PDF fetches from this
+    network (403 / HTML interstitial on every endpoint).
+
+**Resumability:** re-runs skip PDFs already on disk and reuse
+`crossref_cache.json` + `unpaywall_cache.json`, so effort is spent only on new
+attempts. Coverage would rise substantially from an institutional network
+(EZproxy/OpenAthens) or with an Unpaywall-plus-repository proxy.
+
+
 ## Criteria Scoring — embeddings as an independent axis
 A separate analysis scores how strongly each paper's text *argues* the three
 criteria (`two_worlds`, `adaptors`, `arbitrariness`), to complement the categorical
@@ -132,6 +124,31 @@ continuous signal.
 **Decision 0 (load-bearing):** the embedding axis is **independent** — reported
 side-by-side with the verdicts, never overriding, gating, or band-merging them. The
 verdict stays the categorical backbone.
+
+### Three chunking methods (each fed as separate documents)
+Each paper is embedded **three ways** to test which granularity best tracks the
+verdict, surfaced as three columns (`e_full` / `e_abstract` / `e_chunk`) in
+`report.md` + a `PER-PAPER VERDICTS` table with the verdict and its confidence:
+- **full** — the whole (char-budget-capped) paper as one document.
+- **abstract** — the abstract section only.
+- **chunk** — 8192-token windows at 50% overlap (stride 4096), scored per window then
+  **max-pooled** (strongest evidence anywhere).
+
+### MySQL is the system of record (not JSON)
+All embedding output is stored in **MySQL on asushimu** (conda mysqld, data dir
+`asushimu:/nvme/mysql/data`, DB `codebiology`), **not** JSON. `db.py` owns the schema.
+The GPU host returns a transient `embed_out.json` purely as transport — the driver
+loads it into MySQL and deletes it. Connection params live in gitignored `.env`
+(`DB_HOST/PORT/NAME/USER/PASS`); never commit it. Tables (vectors are float32 LE bytes):
+- **`doc_vectors`** (`code_number, pdf_path, method, chunk_idx, dim, vec LONGBLOB`) and
+  **`pole_vectors`** (`criterion, pole, dim, vec`) — the **raw vectors** that make the
+  offline `--recompute` levers possible (the Run 2 structural unlock).
+- **`embedding_scores`** — one row per `(code_number, pdf_path, method, criterion)` with
+  `e` / `verdict` / `confidence`; **`code_number` is the leading PK column**.
+  `--recompute` upserts `e` only, preserving the verdict.
+- **`pole_separation`** — pole widths incl. the centred `within` rows; **`control_scores`**;
+  **`run_meta`** (lever params + scoring mode). `report.md` regenerates from the DB
+  (`--report-only` reads scores; `--recompute` rescores then writes).
 
 ### Architecture (Run 2): GPU emits vectors, the driver scores offline
 Run 1's double-cosine `e = cos(paper, POS) − cos(paper, NEG)` under-discriminated
@@ -175,31 +192,6 @@ e_c(d) = a_c⊥ · normalize( whiten(d − μ, B) )               # chunk window
   upserts `e` only (verdict/confidence preserved) and regenerates `report.md`.
 - `pdf_text.py` — `extract_abstract()` (abstract heading, preamble fallback).
 
-### Three chunking methods (each fed as separate documents)
-Each paper is embedded **three ways** to test which granularity best tracks the
-verdict, surfaced as three columns (`e_full` / `e_abstract` / `e_chunk`) in
-`report.md` + a `PER-PAPER VERDICTS` table with the verdict and its confidence:
-- **full** — the whole (char-budget-capped) paper as one document.
-- **abstract** — the abstract section only.
-- **chunk** — 8192-token windows at 50% overlap (stride 4096), scored per window then
-  **max-pooled** (strongest evidence anywhere).
-
-### MySQL is the system of record (not JSON)
-All embedding output is stored in **MySQL on asushimu** (conda mysqld, data dir
-`asushimu:/nvme/mysql/data`, DB `codebiology`), **not** JSON. `db.py` owns the schema.
-The GPU host returns a transient `embed_out.json` purely as transport — the driver
-loads it into MySQL and deletes it. Connection params live in gitignored `.env`
-(`DB_HOST/PORT/NAME/USER/PASS`); never commit it. Tables (vectors are float32 LE bytes):
-- **`doc_vectors`** (`code_number, pdf_path, method, chunk_idx, dim, vec LONGBLOB`) and
-  **`pole_vectors`** (`criterion, pole, dim, vec`) — the **raw vectors** that make the
-  offline `--recompute` levers possible (the Run 2 structural unlock).
-- **`embedding_scores`** — one row per `(code_number, pdf_path, method, criterion)` with
-  `e` / `verdict` / `confidence`; **`code_number` is the leading PK column**.
-  `--recompute` upserts `e` only, preserving the verdict.
-- **`pole_separation`** — pole widths incl. the centred `within` rows; **`control_scores`**;
-  **`run_meta`** (lever params + scoring mode). `report.md` regenerates from the DB
-  (`--report-only` reads scores; `--recompute` rescores then writes).
-
 ### Critical environment assumptions (hard-won)
 - **GPU pinning:** the 3090 Ti is **GPU index 2** under
   `CUDA_DEVICE_ORDER=PCI_BUS_ID`. The two GTX 1080 Tis are sm_61, **unsupported** by
@@ -215,10 +207,33 @@ loads it into MySQL and deletes it. Connection params live in gitignored `.env`
 - **Run logging:** each run logs total embeds per method up front, then per doc a
   stable `id=<pdf-stem>`, `[doc i/N]`, and a running `done/total` per method.
 
+### Findings — Run 2 leverred (220-paper corpus, 2026-06-14)
+The one structural GPU re-run landed (220 papers × 3 methods = 962 chunk windows, 5376-dim;
+6 pole vectors). Scored offline (`--recompute`, `k=0`, `strength=0.5`).
+- **The 428 halo collapsed (the headline win).** In Run 1 code 428 topped *all three*
+  criteria including `arbitrariness` (`not_met`). At corpus scale (111 codes) it is now
+  mid-pack everywhere: `two_worlds` (met) rank 32/111, `adaptors` (met) rank 12, and
+  crucially `arbitrariness` (not_met) rank 22 — no longer dominating. Its strongest
+  criterion is now a `met` one (adaptors). Mild over-correction on `full` (its met
+  `two_worlds` at rank 32 dips below its not_met `arbitrariness` at 22), but both middling
+  and the absolute `e` gap is tiny.
+- **Pole widths `within` (centred cos pos↔neg, lower = better separated):** `arbitrariness`
+  +0.515 (best), `adaptors` +0.629, `two_worlds` +0.680. Poles still overlap enough that
+  **ranks are trustworthy, magnitudes less so**.
+- **A self-corpus leak surfaced:** code 321 (`www.codebiology.org/conferences/Guimaraes…`,
+  an in-corpus Code Biology *conference* document, not a primary paper) now tops most
+  criteria — it reads maximally in-register because the poles are mined from that same
+  corpus. Such meta-documents should be excluded/flagged.
+- **Two honest gaps.** (1) Control scores in `report.md` are still the **pre-lever Run-1
+  contrastive** values — control document vectors aren't persisted, so `--recompute` can't
+  re-score them; refreshing them needs one re-embed that captures control vectors.
+  (2) Spearman ρ is unchanged (+0.522 / +0.522 / n-a) — the labelled-verdict subset is too
+  small and imbalanced (`arbitrariness` has no positives) to *measure* the improvement, so
+  the levers' gain shows in the 428 ranks, not in ρ.
+
 ### Findings — Run 1 contrastive (10-paper, 2026-06-14), the motivation for Run 2
 These are the **pre-lever, double-cosine** results; the three structural weaknesses here
-are what the four levers above target. Corpus-scale **leverred** findings are pending the
-one structural GPU re-run (220 papers).
+are what the four levers above target.
 - Controls behave: genetic-code reads positive on all three criteria; deterministic-
   chemistry negative on all three and **most negative on `arbitrariness`**. The lone
   `met` paper (code 428) tops every method on `two_worlds`/`adaptors` (Spearman ρ ≈ +0.52).
@@ -231,24 +246,14 @@ one structural GPU re-run (220 papers).
 - Absolute `e` is small (±0.05) and pole-pair cosines high (poles overlap) — the
   corpus-mined poles + centring/whitening aim to widen this before magnitudes are trusted.
 
-### ⚠️ Deferred revert (PROJECT END)
-The production `llama-server` (Home Assistant voice agent) is **OFFLINE** — the
-3090 Ti was freed for embedding. Restore **at project end only**:
-`cp ~/start_llama.prod.bak ~/start_llama.sh && sudo systemctl restart llama-server`.
-
-## AI Goals & Responsibilities
-- **Primary Task:** Parse the CSV to process the codes and their associated citations.
-- **Specific Extraction:** For every code, parse the references to isolate the **paper name** and map it directly to its corresponding **hyperlink/URL**.
-- **Output:** Generate a clean, structured format (e.g., JSON or cleaned CSV) mapping `Code -> Paper Name -> URL`.
-
-## Rules for AI Agents
-1. **Data Integrity:** Extract exactly what is in the CSV columns. Do not hallucinate references or URLs.
-2. **Data Parsing:** Handle string splitting carefully, as multiple citations and URLs are bundled in single cells.
-3. **Libraries:** Default to Python (`pandas`, `re`) for string manipulation and data extraction. 
-4. **Error Handling:** Log any code categories where the number of parsed paper names does not match the number of parsed URLs.
-
 ## Code development rules
 1. **Testing:** For any new functionality or changes to existing functionality always write or expand code using TDD. Write a failing test first, then the feature or change
 2. **Language** Always write in pythonic readable python and prefer numpy for data management
 3. **Logging** Always use pythonic logging and choose DEBUG, INFO, levels suitably depending on criticality and informationality of the code
 4. **Commit cadence** Pause and commit after each completed task (one logical unit of work). Keep commits small and self-contained; do not batch multiple tasks into one commit.
+
+### ⚠️ Deferred revert (PROJECT END)
+The production `llama-server` (Home Assistant voice agent) is **OFFLINE** — the
+3090 Ti was freed for embedding. Restore **at project end only**:
+`cp ~/start_llama.prod.bak ~/start_llama.sh && sudo systemctl restart llama-server`.
+
