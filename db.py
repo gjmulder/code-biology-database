@@ -74,6 +74,19 @@ DDL = [
         PRIMARY KEY (code_number, pdf_path, method, chunk_idx)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
+    # Raw control-document vectors, kept for the same reason as doc_vectors: so the
+    # offline recompute can score the controls through the **same** corpus geometry as the
+    # papers (centred/whitened/decongested), instead of leaving the stale pre-lever
+    # double-cosine numbers in the report. One representative vector per control.
+    """
+    CREATE TABLE IF NOT EXISTS control_vectors (
+        name    VARCHAR(64) NOT NULL,
+        dim     INT         NOT NULL,
+        vec     LONGBLOB    NOT NULL,   -- float32 little-endian bytes
+        run_ts  DATETIME,
+        PRIMARY KEY (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
     """
     CREATE TABLE IF NOT EXISTS pole_vectors (
         criterion  VARCHAR(32) NOT NULL,
@@ -178,6 +191,15 @@ def doc_vectors_to_rows(out, recs, run_ts):
     return rows
 
 
+def control_vectors_to_rows(out, run_ts):
+    """``out['control_vectors'][name] = vec`` → ``(name, dim, vec_blob, run_ts)`` rows.
+
+    One representative vector per control, persisted so the offline recompute can score
+    the controls with the corpus geometry. Empty/absent → no rows."""
+    return [(name, len(v), pack_vec(v), run_ts)
+            for name, v in out.get("control_vectors", {}).items()]
+
+
 def pole_vectors_to_rows(out, run_ts):
     """``out['pole_vectors'][criterion][pole] = vec`` → ``(criterion, pole, dim,
     vec_blob, run_ts)`` rows."""
@@ -241,6 +263,13 @@ def store(conn, out, recs, run_ts):
                 "VALUES (%s,%s,%s,%s,%s,%s,%s) AS new "
                 "ON DUPLICATE KEY UPDATE dim=new.dim, vec=new.vec, run_ts=new.run_ts",
                 dv)
+        cv = control_vectors_to_rows(out, run_ts)
+        if cv:
+            c.executemany(
+                "INSERT INTO control_vectors (name,dim,vec,run_ts) "
+                "VALUES (%s,%s,%s,%s) AS new "
+                "ON DUPLICATE KEY UPDATE dim=new.dim, vec=new.vec, run_ts=new.run_ts",
+                cv)
         pv = pole_vectors_to_rows(out, run_ts)
         if pv:
             c.executemany(
@@ -274,6 +303,17 @@ def fetch_vectors(conn):
     for crit, pole, blob in pole_rows:
         poles.setdefault(crit, {})[pole] = unpack_vec(blob)
     return doc_vecs, poles, codes
+
+
+def fetch_control_vectors(conn):
+    """Load persisted control vectors → ``{name: np.ndarray}`` (empty if none stored).
+
+    Returned for the offline recompute to score with the corpus geometry; an empty dict
+    means the structural embed predates control-vector capture, so the report keeps the
+    pre-lever control numbers and flags them."""
+    with conn.cursor() as c:
+        c.execute("SELECT name,vec FROM control_vectors")
+        return {name: unpack_vec(blob) for name, blob in c.fetchall()}
 
 
 def apply_recompute(conn, scores, codes, within, params, run_ts):

@@ -32,6 +32,8 @@ SAMPLE_OUT = {
     },
     "controls": {"genetic_code_positive": {"two_worlds": 0.4, "adaptors": 0.4,
                                            "arbitrariness": 0.4}},
+    "control_vectors": {"genetic_code_positive": [0.1, 0.2, 0.3],
+                        "deterministic_chemistry": [0.3, 0.2, 0.1]},
     "pole_separation": {"pos": {"two_worlds~adaptors": 0.2},
                         "neg": {"two_worlds~adaptors": 0.3}},
 }
@@ -90,6 +92,19 @@ def test_doc_vectors_to_rows_grain_and_chunk_indexing():
     chunks = sorted((r for r in rows if r[2] == "chunk"), key=lambda r: r[3])
     assert [r[3] for r in chunks] == [0, 1]
     assert np.allclose(db.unpack_vec(chunks[1][5]), [1.0, 1.1, 1.2])
+
+
+def test_control_vectors_to_rows_grain():
+    rows = db.control_vectors_to_rows(SAMPLE_OUT, run_ts="t")
+    # 2 controls; tuple shape (name, dim, vec_blob, run_ts)
+    assert len(rows) == 2
+    gc = next(r for r in rows if r[0] == "genetic_code_positive")
+    assert gc[1] == 3 and gc[3] == "t"
+    assert np.allclose(db.unpack_vec(gc[2]), [0.1, 0.2, 0.3])
+
+
+def test_control_vectors_to_rows_empty_when_absent():
+    assert db.control_vectors_to_rows({"controls": {}}, run_ts="t") == []
 
 
 def test_pole_vectors_to_rows_grain():
