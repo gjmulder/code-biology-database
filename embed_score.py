@@ -230,13 +230,18 @@ def build_axes(poles, mu, strength=DEFAULT_SHARED_STRENGTH):
     return axes, shared, within
 
 
-def recompute(doc_vecs, poles, k=DEFAULT_WHITEN_K, strength=DEFAULT_SHARED_STRENGTH):
-    """Rescore every persisted paper offline with all four space-level levers.
+def build_scorer(doc_vecs, poles, k=DEFAULT_WHITEN_K, strength=DEFAULT_SHARED_STRENGTH):
+    """Build the offline scoring geometry from the corpus document vectors.
 
-    ``doc_vecs = {paper_id: {method: [vec, ...]}}`` (full/abstract carry one vector;
-    chunk carries every window). ``poles = {criterion: {'pos': vec, 'neg': vec}}``.
-    Returns ``(scores, within)`` with ``scores[paper_id][method][criterion] = e`` and the
-    centred pole widths ``within[criterion]``. No GPU, no I/O — pure vector math."""
+    Returns ``(project, axes, within)`` where ``project(vec)`` maps a raw document vector
+    into the centred (μ) + whitened (top-``k`` PCs removed) unit space, ``axes[c]`` is the
+    shared-decongested unit criterion axis, and ``within[c]`` is the centred pole width.
+    The criterion score is then ``e_c(d) = project(d) · axes[c]``.
+
+    Exposing the geometry as a reusable closure lets **papers and controls be scored with
+    the identical μ / basis / axes** — so control ``e`` is leverred, not the pre-lever
+    double-cosine. ``μ`` and the whitening basis are derived from the **paper** corpus only
+    (``doc_vecs``); controls are projected through that same geometry, never folded into it."""
     reps = np.array([_rep_vec(doc_vecs[p]) for p in doc_vecs], dtype=np.float64)
     mu = corpus_mean(reps)
     basis = whiten_basis(center(reps, mu), k)
@@ -248,6 +253,17 @@ def recompute(doc_vecs, poles, k=DEFAULT_WHITEN_K, strength=DEFAULT_SHARED_STREN
             d = d - (d @ basis.T) @ basis
         return _l2(d)
 
+    return project, axes, within
+
+
+def recompute(doc_vecs, poles, k=DEFAULT_WHITEN_K, strength=DEFAULT_SHARED_STRENGTH):
+    """Rescore every persisted paper offline with all four space-level levers.
+
+    ``doc_vecs = {paper_id: {method: [vec, ...]}}`` (full/abstract carry one vector;
+    chunk carries every window). ``poles = {criterion: {'pos': vec, 'neg': vec}}``.
+    Returns ``(scores, within)`` with ``scores[paper_id][method][criterion] = e`` and the
+    centred pole widths ``within[criterion]``. No GPU, no I/O — pure vector math."""
+    project, axes, within = build_scorer(doc_vecs, poles, k, strength)
     scores = {}
     for pid, methods in doc_vecs.items():
         scores[pid] = {
@@ -256,6 +272,49 @@ def recompute(doc_vecs, poles, k=DEFAULT_WHITEN_K, strength=DEFAULT_SHARED_STREN
             for method, vecs in methods.items()
         }
     return scores, within
+
+
+def score_controls(control_vecs, doc_vecs, poles, k=DEFAULT_WHITEN_K,
+                   strength=DEFAULT_SHARED_STRENGTH):
+    """Score the control documents with the **same corpus geometry** the papers use.
+
+    ``control_vecs = {name: vec}`` (one representative vector per control) →
+    ``{name: {criterion: e}}``. The geometry (μ, whitening basis, decongested axes) is
+    built from ``doc_vecs`` (the papers) so a control is leverred exactly as a paper would
+    be — making the control separation in ``report.md`` an apples-to-apples check rather
+    than the stale pre-lever contrastive numbers."""
+    project, axes, _ = build_scorer(doc_vecs, poles, k, strength)
+    return {name: {c: float(project(np.asarray(v, dtype=np.float64)) @ axes[c])
+                   for c in axes}
+            for name, v in control_vecs.items()}
+
+
+# --- in-corpus self-reference filter ---------------------------------------
+#
+# The poles are mined from the Code Biology corpus itself, so any document that is *also*
+# part of that corpus (a conference abstract or society page mirrored under
+# www.codebiology.org) reads maximally in-register and leaks to the top of every
+# criterion — code 321 topped most criteria in the leverred Run 2 for exactly this
+# reason. These are meta-documents, not primary cited papers, so they are dropped from
+# the recompute corpus (μ, ranking, and report) rather than scored.
+
+CORPUS_SELF_HOSTS = ("codebiology.org",)
+
+
+def is_corpus_self_reference(pid):
+    """True if ``pid`` (a ``pdf_path``) is an in-corpus Code Biology self-reference."""
+    p = str(pid).lower()
+    return any(host in p for host in CORPUS_SELF_HOSTS)
+
+
+def drop_self_references(doc_vecs):
+    """Split ``{paper_id: ...}`` into ``(kept, dropped_ids)``, removing self-references.
+
+    ``dropped_ids`` preserves input order so the driver can log/exclude exactly which
+    documents left the corpus."""
+    dropped = [p for p in doc_vecs if is_corpus_self_reference(p)]
+    kept = {p: v for p, v in doc_vecs.items() if p not in dropped}
+    return kept, dropped
 
 
 # --- chunking-method helpers (full / abstract / 8K-overlap) ----------------

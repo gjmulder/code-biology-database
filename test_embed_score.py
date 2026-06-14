@@ -281,6 +281,52 @@ def test_recompute_scores_papers_with_levers_and_maxpools_chunks():
     assert set(within) == {"a"}
 
 
+# --- leverred controls + in-corpus self-reference filter (b) --------------
+#
+# Controls must be scored with the SAME corpus geometry (μ / whitening / decongested
+# axes) as the papers, so their e is leverred — not the pre-lever double-cosine. And
+# in-corpus Code Biology self-references (conference/society pages mirrored under
+# www.codebiology.org) read maximally in-register because the poles are mined from that
+# same corpus, so they leak to the top of every criterion and must be dropped.
+
+def test_build_scorer_composes_into_recompute():
+    # build_scorer exposes the geometry recompute uses; projecting a doc onto an axis
+    # must reproduce recompute's score exactly (same μ, basis, axes, within).
+    poles = {"a": {"pos": [1.0, 0, 0, 0], "neg": [0.0, 1, 0, 0]}}
+    docs = {"p1": {"full": [[1.0, 0, 0, 0]]}, "p2": {"full": [[0.3, 0.7, 0, 0]]}}
+    project, axes, within = es.build_scorer(docs, poles, k=0, strength=0.0)
+    scores, within2 = es.recompute(docs, poles, k=0, strength=0.0)
+    for pid in docs:
+        assert np.isclose(float(project(docs[pid]["full"][0]) @ axes["a"]),
+                          scores[pid]["full"]["a"])
+    assert within == within2
+
+
+def test_score_controls_uses_same_geometry_as_papers():
+    poles = {"a": {"pos": [1.0, 0, 0, 0], "neg": [0.0, 1, 0, 0]}}
+    docs = {"p1": {"full": [[1.0, 0, 0, 0]]}, "p2": {"full": [[0.0, 1, 0, 0]]}}
+    controls = {"genetic": [1.0, 0, 0, 0], "chem": [0.0, 1, 0, 0]}
+    cscores = es.score_controls(controls, docs, poles, k=0, strength=0.0)
+    paper_scores, _ = es.recompute(docs, poles, k=0, strength=0.0)
+    # a control equal to p1's full vector lands on p1's full score (identical geometry)
+    assert np.isclose(cscores["genetic"]["a"], paper_scores["p1"]["full"]["a"])
+    assert cscores["genetic"]["a"] > cscores["chem"]["a"]    # controls separate
+
+
+def test_is_corpus_self_reference_flags_codebiology_org_only():
+    assert es.is_corpus_self_reference(
+        "www.codebiology.org_conferences_Guimaraes_2026_abstract.pdf")
+    assert not es.is_corpus_self_reference("10.1234_journal.pone.2020.pdf")
+
+
+def test_drop_self_references_excludes_in_corpus_docs():
+    docs = {"www.codebiology.org_conf.pdf": {"full": [[1.0, 0]]},
+            "10.1_primary_paper.pdf": {"full": [[0.0, 1]]}}
+    kept, dropped = es.drop_self_references(docs)
+    assert dropped == ["www.codebiology.org_conf.pdf"]
+    assert list(kept) == ["10.1_primary_paper.pdf"]
+
+
 # --- chunking methods (full / abstract / 8K-overlap) ----------------------
 
 def test_token_windows_short_sequence_is_single_window():
