@@ -113,3 +113,25 @@ def test_controls_and_poles_and_meta_rows():
     meta = dict((k, v) for k, v, *_ in db.meta_rows(SAMPLE_OUT, "t"))
     assert meta["model"] == "harrier"
     assert meta["chunk_size"] == "8192"
+
+
+def test_recompute_score_rows_carry_code_and_e_only():
+    scores = {
+        "pdfs/a.pdf": {
+            "full": {"two_worlds": 0.5, "adaptors": -0.2},
+            "chunk": {"two_worlds": 0.3, "adaptors": 0.1},
+        }
+    }
+    codes = {"pdfs/a.pdf": 233}
+    rows = db.recompute_score_rows(scores, codes, run_ts="t")
+    # (code_number, pdf_path, method, criterion, e, run_ts) — for an e-only upsert
+    assert (233, "pdfs/a.pdf", "full", "two_worlds", 0.5, "t") in rows
+    assert (233, "pdfs/a.pdf", "chunk", "adaptors", 0.1, "t") in rows
+    assert len(rows) == 4
+    assert all(isinstance(r[4], float) for r in rows)
+
+
+def test_within_rows_store_pole_width_under_within():
+    rows = db.within_rows({"two_worlds": 0.77, "adaptors": 0.64}, run_ts="t")
+    assert ("within", "two_worlds", 0.77, "t") in rows
+    assert ("within", "adaptors", 0.64, "t") in rows

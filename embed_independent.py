@@ -34,6 +34,7 @@ import subprocess
 import numpy as np
 
 import db
+import embed_score as es_mod
 import pdf_text
 from criteria_judge import verdict_ordinal
 from download_pdfs import output_path_for, read_rows
@@ -185,6 +186,13 @@ def report_from_db(conn, md_path, csv_path):
           f"to test which granularity best tracks the verdict (chunk size "
           f"{meta.get('chunk_size','?')}, overlap {meta.get('chunk_overlap','?')}).",
           ""]
+    if meta.get("scoring") == "leverred-axis":
+        md += ["**Scoring:** offline recompute from persisted vectors with all four "
+               "space-level levers — centre (μ), whiten (top-`k` PCs, "
+               f"`k={meta.get('whiten_k','?')}`), unit difference-axis projection, and "
+               "shared-register orthogonalization "
+               f"(`strength={meta.get('shared_strength','?')}`). `e` here is the "
+               "decongested axis projection, not the raw double-cosine.", ""]
 
     # Spearman accumulators: cols[method][crit] = (e_vals, ordinal_vals)
     cols = {m: {c: ([], []) for c in CRITERIA} for m in methods}
@@ -250,9 +258,24 @@ def report_from_db(conn, md_path, csv_path):
                   ", ".join(f"`{k}`={v:+.2f}" for k, v in pairs.items()))
     md.append("")
 
+    within = sep.get("within", {})
+    if within:
+        md.append("## Pole width `within` (centred cosine pos↔neg per criterion)\n")
+        md.append("Bounds the dynamic range of `e`: ≈+1 means the poles overlap and "
+                  "magnitudes are compressed (trust ranks, not magnitudes); toward 0/−1 "
+                  "the poles are well separated and magnitudes carry signal.\n")
+        md.append(_md_table(["criterion", "within"],
+                            [[c, f"{within[c]:+.3f}"] for c in CRITERIA if c in within]))
+        md.append("")
+
     ctrl = payload["controls"]
     if ctrl:
         md.append("## Control checks\n")
+        if meta.get("scoring") == "leverred-axis":
+            md.append("> ⚠️ These control scores are the **prior contrastive** values — "
+                      "control document vectors are not persisted, so the offline "
+                      "recompute cannot re-score them with the levers. Re-embed with "
+                      "control-vector capture to refresh them.\n")
         md.append("genetic-code control should read high on all three; "
                   "deterministic-chemistry should read low on `arbitrariness`.\n")
         crows = [[name] + [_fmt(sc.get(c)) for c in CRITERIA]
@@ -271,6 +294,26 @@ def report_from_db(conn, md_path, csv_path):
     print("\n=== Spearman ρ(e, verdict_ordinal) — which granularity tracks the verdict ===")
     print(_md_table(sp_headers, sp_rows))
     print(f"\nwrote {md_path} and {csv_path} ({len(order)} papers) from MySQL")
+
+
+def recompute_from_db(conn, md_path, csv_path, k, strength):
+    """Offline rescore (no GPU): load persisted vectors, apply all four levers, write the
+    leverred ``e`` + centred pole widths back to MySQL, regenerate the report."""
+    doc_vecs, poles, codes = db.fetch_vectors(conn)
+    if not doc_vecs or not poles:
+        log.warning("no persisted vectors in MySQL — run the GPU embed first; nothing to "
+                    "recompute")
+        return
+    scores, within = es_mod.recompute(doc_vecs, poles, k=k, strength=strength)
+    run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    db.apply_recompute(conn, scores, codes, within,
+                       {"whiten_k": k, "shared_strength": strength,
+                        "scoring": "leverred-axis"}, run_ts)
+    n_methods = len(next(iter(scores.values())))
+    log.info("recomputed %d papers x %d methods (k=%d, strength=%.2f) from vectors; "
+             "no GPU. within=%s", len(scores), n_methods, k, strength,
+             {c: round(v, 3) for c, v in within.items()})
+    report_from_db(conn, md_path, csv_path)
 
 
 def main():
@@ -302,7 +345,25 @@ def main():
     ap.add_argument("--no-4bit", action="store_true")
     ap.add_argument("--report-only", action="store_true",
                     help="skip build+remote; regenerate report.md from current DB")
+    ap.add_argument("--recompute", action="store_true",
+                    help="offline (no GPU): rescore from persisted vectors with the "
+                         "space-level levers, write leverred e + pole widths, re-report")
+    ap.add_argument("--whiten-k", type=int, default=es_mod.DEFAULT_WHITEN_K,
+                    help="top-k principal components removed in whitening (0 = off; the "
+                         "20-paper smoke test found k>=1 hurt — raise only on a big corpus)")
+    ap.add_argument("--shared-strength", type=float, default=es_mod.DEFAULT_SHARED_STRENGTH,
+                    help="how strongly each criterion axis is orthogonalized against the "
+                         "shared register direction, in [0,1]; 1.0 over-corrected on the "
+                         "smoke test, so the default is partial")
     args = ap.parse_args()
+
+    if args.recompute:
+        conn = db.connect()
+        try:
+            recompute_from_db(conn, args.md, args.csv, args.whiten_k, args.shared_strength)
+        finally:
+            conn.close()
+        return
 
     if args.report_only:
         conn = db.connect()

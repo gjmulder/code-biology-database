@@ -26,6 +26,14 @@ logger = logging.getLogger(__name__)
 
 CRITERIA = ["two_worlds", "adaptors", "arbitrariness"]
 
+# Offline-recompute lever defaults, set from the 20-paper smoke test (see recompute):
+#   * whitening off — k>=1 stripped real criterion signal on that tiny sample;
+#   * partial (not full) orthogonalization — full removal nuked the genetic-code
+#     paper's legitimate two_worlds along with its arbitrariness topicality halo.
+# Both are exposed as flags so they can be re-tuned once the full corpus is embedded.
+DEFAULT_WHITEN_K = 0
+DEFAULT_SHARED_STRENGTH = 0.5
+
 
 def load_prototypes(path="prototypes.json"):
     """Load the per-criterion pos/neg passage lists + instructions."""
@@ -91,6 +99,20 @@ def center(vec, mu):
     return np.asarray(vec, dtype=np.float64) - np.asarray(mu, dtype=np.float64)
 
 
+def whiten_basis(vecs, k):
+    """Top-``k`` principal axes (right singular vectors) of the (centred) row set.
+
+    Returned as a ``(k, dim)`` orthonormal matrix so the same basis can be applied to
+    documents and poles consistently. ``k`` is capped at the available rank; ``k <= 0``
+    yields an empty ``(0, dim)`` basis (the whitening identity)."""
+    X = np.asarray(vecs, dtype=np.float64)
+    k = min(k, *X.shape)
+    if k <= 0:
+        return np.zeros((0, X.shape[1]))
+    _, _, Vt = np.linalg.svd(X, full_matrices=False)
+    return Vt[:k]                       # (k, dim) orthonormal principal axes
+
+
 def whiten(vecs, k):
     """Remove the top-``k`` principal components ('all-but-the-top') from a set of
     (already centred) vectors.
@@ -99,15 +121,14 @@ def whiten(vecs, k):
     narrow cone: a few dominant shared directions carry most of the variance, so every
     in-register cosine is high and the criterion axes are compressed. Projecting out the
     top-``k`` PCs strips that common-component anisotropy and restores dynamic range.
-    ``k`` is capped at the available rank so over-asking never raises."""
+    NB the 20-paper smoke test found ``k>=1`` *hurt* on that tiny sample (the top PC
+    still carried criterion signal there), so the default in the recompute path is
+    ``k=0``; raise it only once the corpus is large enough to trust the PC estimate."""
     X = np.asarray(vecs, dtype=np.float64)
-    k = min(k, *X.shape)
-    if k <= 0:
+    B = whiten_basis(X, k)
+    if B.shape[0] == 0:
         return X
-    # right singular vectors of the centred row set = its principal axes
-    _, _, Vt = np.linalg.svd(X, full_matrices=False)
-    top = Vt[:k]                       # (k, dim)
-    return X - (X @ top.T) @ top       # project the top-k subspace out
+    return X - (X @ B.T) @ B            # project the top-k subspace out
 
 
 def shared_direction(axes):
@@ -127,16 +148,24 @@ def shared_direction(axes):
     return s
 
 
-def orthogonalize(axis, shared):
+def orthogonalize(axis, shared, strength=1.0):
     """Partial ``axis`` against the ``shared`` register direction.
 
-    ``a⊥ = normalize(a − (a·ŝ) ŝ)`` — removes the shared-topicality component so the
-    projection measures only the criterion-specific (pos-vs-its-own-neg) contrast, not
-    how on-topic the text is. A zero residual (axis parallel to ``shared``) stays zero
-    via the norm floor."""
+    ``a⊥ = normalize(a − strength·(a·ŝ) ŝ)`` — removes the shared-topicality component so
+    the projection measures only the criterion-specific (pos-vs-its-own-neg) contrast,
+    not how on-topic the text is. A zero residual (axis parallel to ``shared``) stays
+    zero via the norm floor.
+
+    ``strength`` ∈ [0, 1] scales how much of the shared component is stripped. The
+    20-paper smoke test showed that **full** removal (``strength=1.0``) over-corrects
+    when the criteria axes are strongly co-aligned (≈0.74 there): it discards the
+    *legitimate* signal of an on-topic-and-genuinely-positive paper (the genetic-code
+    paper lost its true ``two_worlds`` rank along with its ``arbitrariness`` halo).
+    ``strength=0`` is the identity; the recompute default is partial — see
+    :data:`DEFAULT_SHARED_STRENGTH`."""
     a = np.asarray(axis, dtype=np.float64)
     s = _l2(shared)
-    return _l2(a - float(a @ s) * s)
+    return _l2(a - strength * float(a @ s) * s)
 
 
 def axis_vector(pole):
@@ -161,6 +190,72 @@ def axis_score(doc_vec, pole):
     *unit* axis) puts every criterion on a common scale, so a narrow-pole criterion is
     no longer penalised relative to a wide-pole one. Degenerate poles score ``0.0``."""
     return float(_l2(doc_vec) @ axis_vector(pole))
+
+
+# --- offline recompute: compose all four levers from persisted vectors ------
+#
+# This is the final scoring path. After the single structural GPU embed, every contrast
+# number is recomputed here from the stored doc/pole vectors with **no GPU** — so the
+# levers can be re-tuned and the report regenerated freely. The composition is
+#   μ      = mean of the per-paper representative (full) vectors      (centring origin)
+#   B      = top-k principal axes of the centred reps                 (whitening basis)
+#   a_c    = normalize(p̂_c − n̂_c) on the centred poles               (difference axis)
+#   ŝ      = shared register direction across {a_c}
+#   a_c⊥   = normalize(a_c − strength·(a_c·ŝ) ŝ)                       (decongest halo)
+#   e_c(d) = a_c⊥ · normalize( whiten(d − μ, B) )                     (axis projection)
+# chunk windows are max-pooled (strongest evidence); full/abstract are a single window.
+
+def _rep_vec(methods):
+    """A paper's representative vector for the corpus geometry (μ + whitening basis):
+    its ``full`` embedding, else the first vector of whatever method it has."""
+    seq = methods.get("full") or next(iter(methods.values()))
+    return np.asarray(seq[0], dtype=np.float64)
+
+
+def build_axes(poles, mu, strength=DEFAULT_SHARED_STRENGTH):
+    """Centred, shared-decongested per-criterion axes from the pole vectors.
+
+    Returns ``(axes, shared, within)`` where ``axes[c]`` is the unit difference axis on
+    the μ-centred poles, partialled against the shared register direction by ``strength``;
+    ``shared`` is that direction; and ``within[c]`` is the **centred** pole width (cosine
+    of the criterion's own centred pos/neg) — the dynamic-range bound, rendered in the
+    report."""
+    mu = np.asarray(mu, dtype=np.float64)
+    cpoles = {c: {"pos": center(poles[c]["pos"], mu), "neg": center(poles[c]["neg"], mu)}
+              for c in poles}
+    raw = {c: axis_vector(cpoles[c]) for c in cpoles}
+    shared = shared_direction(list(raw.values()))
+    axes = {c: orthogonalize(raw[c], shared, strength) for c in cpoles}
+    within = {c: float(_l2(cpoles[c]["pos"]) @ _l2(cpoles[c]["neg"])) for c in cpoles}
+    return axes, shared, within
+
+
+def recompute(doc_vecs, poles, k=DEFAULT_WHITEN_K, strength=DEFAULT_SHARED_STRENGTH):
+    """Rescore every persisted paper offline with all four space-level levers.
+
+    ``doc_vecs = {paper_id: {method: [vec, ...]}}`` (full/abstract carry one vector;
+    chunk carries every window). ``poles = {criterion: {'pos': vec, 'neg': vec}}``.
+    Returns ``(scores, within)`` with ``scores[paper_id][method][criterion] = e`` and the
+    centred pole widths ``within[criterion]``. No GPU, no I/O — pure vector math."""
+    reps = np.array([_rep_vec(doc_vecs[p]) for p in doc_vecs], dtype=np.float64)
+    mu = corpus_mean(reps)
+    basis = whiten_basis(center(reps, mu), k)
+    axes, _, within = build_axes(poles, mu, strength)
+
+    def project(vec):
+        d = center(vec, mu)
+        if basis.shape[0]:
+            d = d - (d @ basis.T) @ basis
+        return _l2(d)
+
+    scores = {}
+    for pid, methods in doc_vecs.items():
+        scores[pid] = {
+            method: {c: aggregate_chunks([float(project(v) @ axes[c]) for v in vecs])
+                     for c in axes}
+            for method, vecs in methods.items()
+        }
+    return scores, within
 
 
 # --- chunking-method helpers (full / abstract / 8K-overlap) ----------------

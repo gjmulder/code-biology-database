@@ -207,6 +207,80 @@ def test_orthogonalized_axes_are_decongested_from_shared_register():
         assert abs(float(np.dot(es.orthogonalize(a, s), s))) < 1e-9
 
 
+# --- partial orthogonalization + offline recompute pipeline (Task 6) -------
+#
+# The 20-paper smoke test showed full orthogonalization (strength 1.0) over-corrects:
+# at ~0.74 cross-criterion axis co-alignment it strips the *legitimate* two_worlds
+# signal from the genetic-code paper along with the topicality halo. So the strength
+# is now a tunable in [0,1] and whitening defaults off (k=0) — it hurt on 20 docs.
+
+def test_orthogonalize_strength_scales_shared_removal():
+    shared = es._l2([1, 0, 0])
+    a = [2.0, 1.0, 0.0]                                   # shared comp 2, unique comp 1
+    full = float(np.dot(es.orthogonalize(a, shared, 1.0), shared))
+    half = float(np.dot(es.orthogonalize(a, shared, 0.5), shared))
+    none = float(np.dot(es.orthogonalize(a, shared, 0.0), shared))
+    assert np.isclose(full, 0.0)                          # strength 1 = full removal
+    assert none > half > full                             # less strength keeps more
+    assert np.isclose(np.linalg.norm(es.orthogonalize(a, shared, 0.5)), 1.0)
+
+
+def test_orthogonalize_strength_defaults_to_full_removal():
+    shared = es._l2([1, 0, 0])
+    a = [2.0, 1.0, 0.0]
+    assert np.allclose(es.orthogonalize(a, shared), es.orthogonalize(a, shared, 1.0))
+
+
+def test_whiten_basis_reproduces_whiten_projection():
+    rng = np.random.default_rng(3)
+    X = rng.normal(size=(8, 5))
+    X = X - X.mean(axis=0)
+    B = es.whiten_basis(X, 2)
+    assert B.shape == (2, 5)
+    assert np.allclose(B @ B.T, np.eye(2), atol=1e-9)            # orthonormal PCs
+    assert np.allclose(X - (X @ B.T) @ B, es.whiten(X, 2))      # same projection
+
+
+def test_whiten_basis_k0_is_empty():
+    assert es.whiten_basis(np.eye(3), 0).shape == (0, 3)
+
+
+def test_build_axes_partials_shared_and_reports_centred_within():
+    mu = np.array([0.1, 0.0, 0.0, 0.0])
+    poles = {
+        "a": {"pos": es._l2([1, 1, 1, 0]), "neg": es._l2([1, 1, 0, 0])},
+        "b": {"pos": es._l2([1, 1, 0, 1]), "neg": es._l2([1, 1, 0, 0])},
+    }
+    axes, shared, within = es.build_axes(poles, mu, strength=1.0)
+    for c in poles:
+        assert np.isclose(np.linalg.norm(axes[c]), 1.0)
+        assert abs(float(axes[c] @ shared)) < 1e-9              # shared partialled out
+        cp = es._l2(np.asarray(poles[c]["pos"]) - mu)
+        cn = es._l2(np.asarray(poles[c]["neg"]) - mu)
+        assert np.isclose(within[c], float(cp @ cn))            # width on centred poles
+
+
+def test_build_axes_strength_zero_leaves_raw_difference_axis():
+    mu = np.zeros(3)
+    poles = {"a": {"pos": [1.0, 0, 0], "neg": [0.0, 1, 0]}}
+    axes, _, _ = es.build_axes(poles, mu, strength=0.0)
+    assert np.allclose(axes["a"], es.axis_vector(poles["a"]))
+
+
+def test_recompute_scores_papers_with_levers_and_maxpools_chunks():
+    poles = {"a": {"pos": [1.0, 0, 0, 0], "neg": [0.0, 1, 0, 0]}}
+    docs = {
+        "p1": {"full": [[1.0, 0, 0, 0]],
+               "chunk": [[0.0, 1, 0, 0], [1.0, 0, 0, 0]]},   # 2nd window aligns with pos
+        "p2": {"full": [[0.0, 1, 0, 0]]},
+    }
+    scores, within = es.recompute(docs, poles, k=0, strength=0.0)
+    assert scores["p1"]["full"]["a"] > scores["p2"]["full"]["a"]   # p1 reads positive
+    # chunk max-pool keeps the strongest window → matches p1's full score
+    assert np.isclose(scores["p1"]["chunk"]["a"], scores["p1"]["full"]["a"])
+    assert set(within) == {"a"}
+
+
 # --- chunking methods (full / abstract / 8K-overlap) ----------------------
 
 def test_token_windows_short_sequence_is_single_window():

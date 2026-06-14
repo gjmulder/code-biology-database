@@ -186,6 +186,22 @@ def pole_vectors_to_rows(out, run_ts):
             for pole, v in poles.items()]
 
 
+def recompute_score_rows(scores, codes, run_ts):
+    """Leverred-``e`` rows from the offline recompute → ``(code_number, pdf_path,
+    method, criterion, e, run_ts)`` for an **e-only** upsert that preserves the existing
+    verdict/confidence. ``scores[pid][method][crit] = e``; ``codes[pid] = code_number``."""
+    return [(codes.get(pid), pid, method, crit, float(e), run_ts)
+            for pid, methods in scores.items()
+            for method, cdict in methods.items()
+            for crit, e in cdict.items()]
+
+
+def within_rows(within, run_ts):
+    """Centred pole widths → ``pole_separation`` rows under the ``within`` pole, one per
+    criterion (``pair`` = criterion name)."""
+    return [("within", crit, float(cos), run_ts) for crit, cos in within.items()]
+
+
 def meta_rows(out, run_ts):
     return [(k, str(out.get(k))) for k in
             ("model", "dim", "use_4bit", "methods", "chunk_size", "chunk_overlap")
@@ -232,6 +248,53 @@ def store(conn, out, recs, run_ts):
                 "VALUES (%s,%s,%s,%s,%s) AS new "
                 "ON DUPLICATE KEY UPDATE dim=new.dim, vec=new.vec, run_ts=new.run_ts",
                 pv)
+    conn.commit()
+
+
+# --- offline recompute (no GPU): read vectors, write leverred scores --------
+
+def fetch_vectors(conn):
+    """Load persisted vectors for the offline recompute.
+
+    Returns ``(doc_vecs, poles, codes)`` where
+    ``doc_vecs[pid][method] = [vec, ...]`` (chunk windows ordered by ``chunk_idx``),
+    ``poles[criterion] = {'pos': vec, 'neg': vec}``, and ``codes[pid] = code_number``."""
+    with conn.cursor() as c:
+        c.execute("SELECT code_number,pdf_path,method,chunk_idx,vec FROM doc_vectors "
+                  "ORDER BY code_number,pdf_path,method,chunk_idx")
+        doc_rows = c.fetchall()
+        c.execute("SELECT criterion,pole,vec FROM pole_vectors")
+        pole_rows = c.fetchall()
+
+    doc_vecs, codes = {}, {}
+    for code, pid, method, _idx, blob in doc_rows:
+        codes[pid] = code
+        doc_vecs.setdefault(pid, {}).setdefault(method, []).append(unpack_vec(blob))
+    poles = {}
+    for crit, pole, blob in pole_rows:
+        poles.setdefault(crit, {})[pole] = unpack_vec(blob)
+    return doc_vecs, poles, codes
+
+
+def apply_recompute(conn, scores, codes, within, params, run_ts):
+    """Persist an offline recompute: upsert the leverred ``e`` (verdict/confidence
+    untouched), the centred pole widths, and the lever params into ``run_meta``."""
+    init_schema(conn)
+    with conn.cursor() as c:
+        c.executemany(
+            "INSERT INTO embedding_scores "
+            "(code_number,pdf_path,method,criterion,e,run_ts) "
+            "VALUES (%s,%s,%s,%s,%s,%s) AS new "
+            "ON DUPLICATE KEY UPDATE e=new.e, run_ts=new.run_ts",
+            recompute_score_rows(scores, codes, run_ts))
+        c.executemany(
+            "INSERT INTO pole_separation (pole,pair,cosine,run_ts) VALUES (%s,%s,%s,%s) "
+            "AS new ON DUPLICATE KEY UPDATE cosine=new.cosine, run_ts=new.run_ts",
+            within_rows(within, run_ts))
+        c.executemany(
+            "INSERT INTO run_meta (k,v) VALUES (%s,%s) AS new "
+            "ON DUPLICATE KEY UPDATE v=new.v",
+            [(k, str(v)) for k, v in params.items()])
     conn.commit()
 
 
