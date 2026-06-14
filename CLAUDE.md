@@ -127,23 +127,53 @@ A separate analysis scores how strongly each paper's text *argues* the three
 criteria (`two_worlds`, `adaptors`, `arbitrariness`), to complement the categorical
 LLM verdicts from `criteria_judge.py`. The LLM `confidence` is saturated (0.9–1.0)
 and carries no gradation, so a **corpus-contrastive embedding** supplies the
-continuous signal: `e = cos(paper, POS_prototype) − cos(paper, NEG_prototype)`, with
-register-matched negative poles so shared "code biology" vocabulary cancels.
+continuous signal.
 
 **Decision 0 (load-bearing):** the embedding axis is **independent** — reported
 side-by-side with the verdicts, never overriding, gating, or band-merging them. The
 verdict stays the categorical backbone.
 
-### Pipeline
-- **`embed_score.py`** — pure scoring math (poles, contrastive score, `token_windows`,
-  `aggregate_chunks`). Fully unit-tested offline.
-- **`pdf_text.py`** — adds `extract_abstract()` (abstract heading, preamble fallback).
-- **`run_harrier_embed.py`** — runs **on asushimu's 3090 Ti**. Loads
-  `microsoft/harrier-oss-v1-27b` (Gemma3-27B decoder-only embedder, 5376-dim, MIT)
-  via sentence-transformers in **4-bit** (bitsandbytes nf4, bf16 compute, ≈13.5 GB).
-- **`embed_independent.py`** — driver on this host: extracts paper text → ships
-  input + runner to asushimu over SSH → runs pinned to the 3090 Ti → loads results
-  to MySQL → generates `report.md` from the DB.
+### Architecture (Run 2): GPU emits vectors, the driver scores offline
+Run 1's double-cosine `e = cos(paper, POS) − cos(paper, NEG)` under-discriminated
+(a topicality halo let code 428 top *all three* criteria; controls barely separated —
+the classic decoder-only-embedder anisotropy). The fix is **space-level, not
+prompt-level**, so the architecture split in two:
+
+- **`run_harrier_embed.py` (GPU, asushimu's 3090 Ti)** emits **raw vectors only** — the
+  document vectors (full / abstract / each chunk) and the pooled pole vectors (3 criteria
+  × pos/neg). It no longer computes `e`. Loads `microsoft/harrier-oss-v1-27b` (Gemma3-27B
+  decoder-only embedder, 5376-dim, MIT) via sentence-transformers in **4-bit**
+  (bitsandbytes nf4, bf16 compute, ≈13.5 GB).
+- **`embed_independent.py` (driver, this host)** persists the vectors to MySQL, then
+  computes `e` **offline** with the four levers below. After **one** structural GPU
+  re-run every lever is re-tunable and the report regenerates with **no further GPU** via
+  `--recompute` (sibling of `--report-only`).
+
+### Four space-level levers — the offline `--recompute` scoring (`embed_score.py`)
+```
+μ      = mean of all document (rep) vectors                 # centring origin
+B      = whiten_basis(center(reps, μ), k)                   # top-k PCs to strip (lever: --whiten-k)
+a_c    = normalize(p̂_c − n̂_c)        on centred poles       # axis-projection contrast (lever)
+ŝ      = shared_direction({a_c})     = first PC of the axes  # shared register direction
+a_c⊥   = orthogonalize(a_c, ŝ, strength)                    # partial out topicality (lever: --shared-strength)
+e_c(d) = a_c⊥ · normalize( whiten(d − μ, B) )               # chunk windows max-pooled
+```
+- `recompute(doc_vecs, poles, k, strength)` is the pure composition; `build_axes`,
+  `whiten_basis`, `shared_direction`, `orthogonalize(axis, shared, strength)` and
+  `axis_score` are the unit-tested pieces. `within[c] = cos(centred pos, centred neg)`
+  (pole width) is recomputed on the centred poles and **rendered** in `report.md`.
+
+#### Tunables (smoke-test-calibrated defaults, both CLI flags)
+- **`--shared-strength` (default `DEFAULT_SHARED_STRENGTH = 0.5`)** — how hard each
+  criterion axis is orthogonalized against the shared register direction. `1.0`
+  over-corrects (collapses 428's *legitimate* `two_worlds` along with its `arbitrariness`
+  halo); `0.5` removes the halo while keeping real signal.
+- **`--whiten-k` (default `DEFAULT_WHITEN_K = 0`)** — number of top PCs removed. `k≥1`
+  hurt on the 20-paper sample (the top PC still carried signal); revisit at corpus scale
+  where the PC estimate is trustworthy.
+- **`--recompute`** — rescore from the persisted vectors with the above flags, no GPU;
+  upserts `e` only (verdict/confidence preserved) and regenerates `report.md`.
+- `pdf_text.py` — `extract_abstract()` (abstract heading, preamble fallback).
 
 ### Three chunking methods (each fed as separate documents)
 Each paper is embedded **three ways** to test which granularity best tracks the
@@ -156,12 +186,19 @@ verdict, surfaced as three columns (`e_full` / `e_abstract` / `e_chunk`) in
 
 ### MySQL is the system of record (not JSON)
 All embedding output is stored in **MySQL on asushimu** (conda mysqld, data dir
-`asushimu:/nvme/mysql/data`, DB `codebiology`), **not** JSON. `db.py` owns the schema;
-the main table `embedding_scores` has **`code_number` as the leading primary-key
-column**, one row per `(code_number, pdf_path, method, criterion)`. The GPU host
-returns a transient `embed_out.json` purely as transport — the driver loads it into
-MySQL and deletes it. `report.md` is regenerated from the DB (`--report-only`).
-Connection params live in gitignored `.env` (`DB_HOST/PORT/NAME/USER/PASS`); never commit it.
+`asushimu:/nvme/mysql/data`, DB `codebiology`), **not** JSON. `db.py` owns the schema.
+The GPU host returns a transient `embed_out.json` purely as transport — the driver
+loads it into MySQL and deletes it. Connection params live in gitignored `.env`
+(`DB_HOST/PORT/NAME/USER/PASS`); never commit it. Tables (vectors are float32 LE bytes):
+- **`doc_vectors`** (`code_number, pdf_path, method, chunk_idx, dim, vec LONGBLOB`) and
+  **`pole_vectors`** (`criterion, pole, dim, vec`) — the **raw vectors** that make the
+  offline `--recompute` levers possible (the Run 2 structural unlock).
+- **`embedding_scores`** — one row per `(code_number, pdf_path, method, criterion)` with
+  `e` / `verdict` / `confidence`; **`code_number` is the leading PK column**.
+  `--recompute` upserts `e` only, preserving the verdict.
+- **`pole_separation`** — pole widths incl. the centred `within` rows; **`control_scores`**;
+  **`run_meta`** (lever params + scoring mode). `report.md` regenerates from the DB
+  (`--report-only` reads scores; `--recompute` rescores then writes).
 
 ### Critical environment assumptions (hard-won)
 - **GPU pinning:** the 3090 Ti is **GPU index 2** under
@@ -178,15 +215,21 @@ Connection params live in gitignored `.env` (`DB_HOST/PORT/NAME/USER/PASS`); nev
 - **Run logging:** each run logs total embeds per method up front, then per doc a
   stable `id=<pdf-stem>`, `[doc i/N]`, and a running `done/total` per method.
 
-### Findings (10-paper run, 2026-06-14)
-- Controls behave (validity check passes): genetic-code reads positive on all three
-  criteria; deterministic-chemistry reads negative on all three and **most negative on
-  `arbitrariness`**. The lone `met` paper (code 428) tops every method on `two_worlds`
-  and `adaptors` → embedding doesn't contradict the verdict (Spearman ρ ≈ +0.52).
-- **full ≈ abstract ≈ chunk** (identical ρ, near-identical magnitudes) — abstract-only
-  is as informative as full text on this sample.
-- Caveat: absolute `e` is small (±0.05) and pole-pair cosines are high (poles partly
-  overlap) — fine for ranking/triage, widen poles before trusting magnitudes.
+### Findings — Run 1 contrastive (10-paper, 2026-06-14), the motivation for Run 2
+These are the **pre-lever, double-cosine** results; the three structural weaknesses here
+are what the four levers above target. Corpus-scale **leverred** findings are pending the
+one structural GPU re-run (220 papers).
+- Controls behave: genetic-code reads positive on all three criteria; deterministic-
+  chemistry negative on all three and **most negative on `arbitrariness`**. The lone
+  `met` paper (code 428) tops every method on `two_worlds`/`adaptors` (Spearman ρ ≈ +0.52).
+- **The topicality halo (lever target):** 428 *also* tops `arbitrariness`, where its
+  verdict is `not_met` — `e` partly ranks "how genetic-code-flavoured" not "argues *this*
+  criterion." On the 20-paper DB the criteria axes are ~0.74 co-aligned with the shared
+  direction; `--shared-strength 0.5` knocks 428's `arbitrariness` off the podium (rank 5)
+  without losing its legitimate `adaptors` (rank 2) / `two_worlds` (rank 6).
+- **full ≈ abstract ≈ chunk** (identical ρ) — granularity is not where signal hides.
+- Absolute `e` is small (±0.05) and pole-pair cosines high (poles overlap) — the
+  corpus-mined poles + centring/whitening aim to widen this before magnitudes are trusted.
 
 ### ⚠️ Deferred revert (PROJECT END)
 The production `llama-server` (Home Assistant voice agent) is **OFFLINE** — the
