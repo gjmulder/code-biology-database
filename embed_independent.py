@@ -33,6 +33,7 @@ import subprocess
 
 import numpy as np
 
+import assign_topics
 import db
 import embed_score as es_mod
 import pdf_text
@@ -45,6 +46,10 @@ logging.basicConfig(level=logging.INFO,
 log = logging.getLogger("embed")
 
 METHODS = ["full", "abstract", "chunk"]
+
+# Per-topic ρ strata smaller than this are pure noise (and the synthetic verdicts are
+# already unreliable — CLAUDE.md §6), so only larger strata get a ρ row.
+MIN_TOPIC_N = 10
 
 
 def load_verdicts(path):
@@ -198,6 +203,51 @@ def spearman(x, y):
     return float((rx * ry).sum() / denom) if denom > 0 else float("nan")
 
 
+def per_topic_spearman(papers, order, dominant_topic, methods, criteria=CRITERIA,
+                       min_n=MIN_TOPIC_N):
+    """Stratify ρ(e, verdict_ordinal) by each paper's dominant scientometric topic.
+
+    The 24 topics are the topicality halo the §4 levers strip, so a within-topic ρ asks
+    the diagnostic question "does the embedding still track the verdict *after* the
+    topic confound is held fixed?". ``dominant_topic`` maps ``pid -> topic_id``
+    (``assign_topics.paper_dominant_topic``); papers without a topic are skipped.
+
+    Returns a list of ``{'topic': id, 'n': labelled_count, 'rho': {criterion: {method:
+    rho_or_None}}}`` for topics with ``>= min_n`` labelled papers, sorted by ``n``
+    descending. A cell is ``None`` when that criterion has no rank variation in the
+    stratum (all verdicts identical) — the same n/a rule the global table uses."""
+    by_topic = {}
+    for pid in order:
+        tid = dominant_topic.get(pid)
+        if tid is None:
+            continue
+        by_topic.setdefault(tid, []).append(papers[pid])
+
+    out = []
+    for tid, plist in by_topic.items():
+        labelled = [p for p in plist
+                    if any(p["verdict"].get(c) in ("met", "not_met", "unclear")
+                           for c in criteria)]
+        if len(labelled) < min_n:
+            continue
+        rho = {}
+        for c in criteria:
+            rho[c] = {}
+            for m in methods:
+                e_vals, o_vals = [], []
+                for p in plist:
+                    v = p["verdict"].get(c)
+                    e = p["scores"].get(m, {}).get(c)
+                    if e is not None and v in ("met", "not_met", "unclear"):
+                        e_vals.append(e)
+                        o_vals.append(verdict_ordinal(v))
+                rho[c][m] = (spearman(e_vals, o_vals)
+                             if len(set(o_vals)) > 1 else None)
+        out.append({"topic": tid, "n": len(labelled), "rho": rho})
+    out.sort(key=lambda r: r["n"], reverse=True)
+    return out
+
+
 def _md_table(headers, rows):
     out = ["| " + " | ".join(headers) + " |",
            "| " + " | ".join("---" for _ in headers) + " |"]
@@ -296,6 +346,40 @@ def report_from_db(conn, md_path, csv_path, run="baseline"):
         sp_rows.append(line)
     md.append(_md_table(sp_headers, sp_rows))
     md.append("")
+
+    # Per-topic ρ: hold the scientometric topic (the topicality halo) fixed, then ask
+    # whether the embedding still tracks the verdict within each topic. Diagnostic only —
+    # strata are small and the verdicts are synthetic (§6), so read direction, not magnitude.
+    chunk_topics = db.fetch_chunk_topics(conn, run=run, method="chunk") if order else {}
+    if chunk_topics:
+        labels = {t: c["label"]
+                  for t, c in db.fetch_topic_centroids(conn, run=run).items()}
+        dominant = {pid: assign_topics.paper_dominant_topic(ch)[0]
+                    for pid, ch in chunk_topics.items()}
+        strata = per_topic_spearman(papers, order, dominant, methods=["chunk"])
+        if strata:
+            md.append("## Per-topic ρ (chunk method) — does `e` track the verdict "
+                      "*within* a topic?\n")
+            md.append("Each paper is assigned to its nearest scientometric topic (Paredes "
+                      "& Prinz 2025) by centred nearest-centroid; ρ is then recomputed "
+                      "within each topic stratum. This holds the topicality halo (the "
+                      "thing the §4 levers strip) fixed, so a positive within-topic ρ is "
+                      "stronger evidence the axis tracks the criterion than the pooled ρ "
+                      f"above. **Diagnostic only** — strata are small (≥{MIN_TOPIC_N} "
+                      "labelled papers shown) and the verdicts are synthetic (§6); read "
+                      "direction, not magnitude. `n/a` = no verdict variation in the "
+                      "stratum.\n")
+            th = ["topic", "n"] + list(CRITERIA)
+            trows = []
+            for s in strata:
+                label = labels.get(s["topic"], "?")
+                cells = []
+                for c in CRITERIA:
+                    r = s["rho"][c]["chunk"]
+                    cells.append("n/a" if r is None else f"{r:+.3f}")
+                trows.append([f"[{s['topic']}] {label}", s["n"]] + cells)
+            md.append(_md_table(th, trows))
+            md.append("")
 
     sep = payload["pole_separation"]
     md.append("## Pole separation (pairwise cosine; high neg-neg ≈ muddied poles)\n")

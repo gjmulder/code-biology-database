@@ -690,6 +690,23 @@ Higher ρ = the embedding ranks papers in the same order the LLM does. ρ is `n/
 | adaptors | +0.265 | +0.293 | +0.310 |
 | arbitrariness | +0.123 | +0.081 | +0.149 |
 
+## Per-topic ρ (chunk method) — does `e` track the verdict *within* a topic?
+
+Each paper is assigned to its nearest scientometric topic (Paredes & Prinz 2025) by centred nearest-centroid; ρ is then recomputed within each topic stratum. This holds the topicality halo (the thing the §4 levers strip) fixed, so a positive within-topic ρ is stronger evidence the axis tracks the criterion than the pooled ρ above. **Diagnostic only** — strata are small (≥10 labelled papers shown) and the verdicts are synthetic (§6); read direction, not magnitude. `n/a` = no verdict variation in the stratum.
+
+| topic | n | two_worlds | adaptors | arbitrariness |
+| --- | --- | --- | --- | --- |
+| [11] Cognitive Signal | 39 | n/a | n/a | +0.359 |
+| [18] Histonic Code | 26 | +0.173 | -0.148 | +0.333 |
+| [19] Neural Circuits | 21 | n/a | n/a | -0.066 |
+| [13] Olfactory Code | 16 | n/a | n/a | n/a |
+| [2] Binding Code | 13 | n/a | n/a | n/a |
+| [0] Morphological Codes | 12 | n/a | n/a | -0.306 |
+| [6] Pathological Code | 12 | n/a | n/a | n/a |
+| [14] Hox Code | 11 | n/a | n/a | +0.203 |
+| [8] Regulatory Code | 10 | +0.087 | -0.104 | +0.522 |
+| [7] Chemical Codes | 10 | +0.248 | -0.609 | -0.174 |
+
 ## Pole separation (pairwise cosine; high neg-neg ≈ muddied poles)
 
 - **pos**: `adaptors~arbitrariness`=+0.63, `two_worlds~adaptors`=+0.82, `two_worlds~arbitrariness`=+0.74

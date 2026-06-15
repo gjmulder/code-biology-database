@@ -143,6 +143,61 @@ def test_run_embed_remote_dispatches_on_engine(monkeypatch):
     assert seen["which"] == "gte" and seen["kw"]["controls_only"] is True
 
 
+def _topic_paper(code, e, verdict):
+    return {"code": code,
+            "scores": {"chunk": {"two_worlds": e}},
+            "verdict": {"two_worlds": verdict},
+            "confidence": {"two_worlds": 1.0}}
+
+
+def test_per_topic_spearman_stratifies_and_thresholds():
+    # topic 5: e rises monotonically with the verdict ordinal -> ρ = +1
+    # topic 9: only one paper -> below min_n, excluded entirely
+    papers = {
+        "a": _topic_paper(1, 0.1, "not_met"),
+        "b": _topic_paper(2, 0.2, "unclear"),
+        "c": _topic_paper(3, 0.3, "met"),
+        "z": _topic_paper(9, 0.9, "met"),
+    }
+    order = ["a", "b", "c", "z"]
+    dominant = {"a": 5, "b": 5, "c": 5, "z": 9}
+    out = ei.per_topic_spearman(papers, order, dominant,
+                                methods=["chunk"], criteria=["two_worlds"], min_n=3)
+    topics = {r["topic"]: r for r in out}
+    assert set(topics) == {5}                      # topic 9 dropped (n=1 < min_n)
+    assert topics[5]["n"] == 3
+    assert abs(topics[5]["rho"]["two_worlds"]["chunk"] - 1.0) < 1e-9
+
+
+def test_per_topic_spearman_marks_no_variation_none():
+    # a stratum where every verdict is identical -> no rank variation -> ρ is None (n/a)
+    papers = {
+        "a": _topic_paper(1, 0.1, "not_met"),
+        "b": _topic_paper(2, 0.2, "not_met"),
+        "c": _topic_paper(3, 0.3, "not_met"),
+    }
+    order = ["a", "b", "c"]
+    dominant = {"a": 5, "b": 5, "c": 5}
+    out = ei.per_topic_spearman(papers, order, dominant,
+                                methods=["chunk"], criteria=["two_worlds"], min_n=3)
+    assert out[0]["rho"]["two_worlds"]["chunk"] is None
+
+
+def test_per_topic_spearman_sorted_by_n_desc():
+    papers = {}
+    order = []
+    dominant = {}
+    for i in range(5):                              # topic 1: 5 papers
+        k = f"t1_{i}"; papers[k] = _topic_paper(i, i / 10, "met" if i else "not_met")
+        order.append(k); dominant[k] = 1
+    for i in range(3):                              # topic 2: 3 papers
+        k = f"t2_{i}"; papers[k] = _topic_paper(i, i / 10, "met" if i else "not_met")
+        order.append(k); dominant[k] = 2
+    out = ei.per_topic_spearman(papers, order, dominant,
+                                methods=["chunk"], criteria=["two_worlds"], min_n=3)
+    assert [r["topic"] for r in out] == [1, 2]     # larger stratum first
+
+
 def test_report_from_db_threads_run_to_fetch_report(monkeypatch):
     # report_from_db must read the embedding columns for the requested run, so a gte pass
     # reports gte vectors (not baseline). Capture the run passed to db.fetch_report.
