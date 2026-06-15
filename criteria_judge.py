@@ -181,6 +181,36 @@ def graded_grounding_gate(parsed, chunk_text):
     return gated
 
 
+def aggregate_graded(chunk_scores):
+    """Roll per-chunk graded records up to one per-paper-per-criterion result.
+
+    ``chunk_scores`` is a list of parsed (and grounded) records, each with ``agreement`` and
+    ``confidence``. Returns ``(graded_max, graded_mean, confidence, categorical)``:
+
+    * ``graded_max``  — max agreement (primary; "argued anywhere", matching the embedding
+      axis's max-pool, embed_score.aggregate_chunks).
+    * ``graded_mean`` — mean agreement (overall stance across the paper).
+    * ``confidence``  — the confidence of the argmax chunk.
+    * ``categorical`` — ``met`` if graded_max ≥ +0.5, ``not_met`` if ≤ 0.0, else ``unclear``.
+
+    Ungrounded positives are already neutralised by :func:`graded_grounding_gate`, so the
+    threshold is purely on the grounded max. Empty input is neutral (0.0) → ``not_met``."""
+    if not chunk_scores:
+        return 0.0, 0.0, 0.0, "not_met"
+    agreements = [float(c["agreement"]) for c in chunk_scores]
+    graded_max = max(agreements)
+    graded_mean = sum(agreements) / len(agreements)
+    argmax = max(chunk_scores, key=lambda c: float(c["agreement"]))
+    confidence = float(argmax.get("confidence", 0.0) or 0.0)
+    if graded_max >= 0.5:
+        categorical = "met"
+    elif graded_max <= 0.0:
+        categorical = "not_met"
+    else:
+        categorical = "unclear"
+    return graded_max, graded_mean, confidence, categorical
+
+
 # --- judging ---------------------------------------------------------------
 
 SYSTEM_PROMPT = (

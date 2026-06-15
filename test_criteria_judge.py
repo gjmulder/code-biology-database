@@ -153,6 +153,35 @@ def test_graded_grounding_gate_ignores_non_positive():
     assert not gated.get("grounding_failed")
 
 
+# --- graded aggregation (per paper per criterion) -------------------------
+
+def _cs(agreement, confidence=1.0):
+    return {"agreement": agreement, "confidence": confidence}
+
+
+def test_aggregate_graded_maxpools_and_takes_argmax_confidence():
+    chunks = [_cs(-0.5, 0.33), _cs(0.5, 0.66), _cs(0.0, 1.0)]
+    gmax, gmean, conf, cat = cj.aggregate_graded(chunks)
+    assert gmax == 0.5                              # strongest evidence anywhere
+    assert abs(gmean - 0.0) < 1e-9                  # (-0.5 + 0.5 + 0.0)/3
+    assert conf == 0.66                             # confidence of the argmax chunk
+    assert cat == "met"                             # gmax >= +0.5
+
+
+def test_aggregate_graded_categorical_thresholds():
+    assert cj.aggregate_graded([_cs(1.0)])[3] == "met"
+    assert cj.aggregate_graded([_cs(0.5)])[3] == "met"
+    assert cj.aggregate_graded([_cs(0.25)])[3] == "unclear"   # 0 < gmax < 0.5
+    assert cj.aggregate_graded([_cs(0.0)])[3] == "not_met"    # gmax <= 0
+    assert cj.aggregate_graded([_cs(-1.0)])[3] == "not_met"
+
+
+def test_aggregate_graded_empty_is_neutral_not_met():
+    gmax, gmean, conf, cat = cj.aggregate_graded([])
+    assert gmax == 0.0 and gmean == 0.0 and conf == 0.0
+    assert cat == "not_met"
+
+
 # --- JSON parsing ----------------------------------------------------------
 
 def test_parse_judgment_reads_plain_json():
