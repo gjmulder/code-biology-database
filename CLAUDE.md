@@ -21,6 +21,12 @@ the same failure modes as the embeddings (see §6), so the embedding axis is **n
 to them: it does not merely position within verdict-chosen bands. Agreement between the two
 (e.g. ρ in §5) is corroboration, not validation against truth.
 
+**Topic stratification (diagnostic, not a third axis).** The corpus is additionally mapped
+onto the 24 scientometric topics of Paredes & Prinz (2025): each paper chunk is assigned to
+its nearest topic centroid in the *same* centred embedding space (§2.1). This is the
+topicality halo the §4 levers strip, reused as a **stratifier** — it lets us ask whether `e`
+tracks the verdict *within* a topic (per-topic ρ, §5) — and does **not** measure the criteria.
+
 ### The three criteria (the definition being measured)
 Per Barbieri (`www.codebiology.org/index.html`), a biological code exists only if **all
 three** are demonstrated (objective, experimentally falsifiable):
@@ -52,7 +58,7 @@ natural selection). Not every PDF entry is a "code" in this strict sense — e.g
 
 ## 2. The data & processing pipeline (reproducible, end-to-end)
 
-Each step lists **script → input → output → tests**. Run `pytest` (178 tests, fully
+Each step lists **script → input → output → tests**. Run `pytest` (202 tests, fully
 offline) after any change. MySQL on asushimu is the system of record from step 5 on.
 
 1. **Extract the code list** — `extract_csv.py`
@@ -122,8 +128,27 @@ offline) after any change. MySQL on asushimu is the system of record from step 5
    - in: MySQL · out: `report.md` + `embedding_scores.csv` (regenerated from the DB).
    - `--report-only` reads scores; `--recompute` rescores from vectors (lever flags) then
      writes. Report sections: per-paper verdicts + embedding columns; Spearman
-     ρ(e, verdict_ordinal) per method × criterion; pole separation; pole width `within`;
-     control checks.
+     ρ(e, verdict_ordinal) per method × criterion; per-topic ρ stratified by nearest
+     scientometric topic (§2.1); pole separation; pole width `within`; control checks.
+
+### 2.1 Scientometric topic stratification (2026-06-15)
+
+Maps the corpus onto the **24 topics** of Paredes & Prinz (2025) to stratify the ρ diagnosis
+(§5). No new GPU pass beyond embedding the centroids; nothing here measures the criteria.
+
+- **Augmented topics** — `code-categories-augmented.csv` (24 rows: label, abbreviation,
+  justification, characteristic terms, **centroid text**).
+- **Embed centroids (GPU, shares the harrier space)** — `run_harrier_centroids.py` → transient
+  `centroids_out.json`. Each topic's centroid text is embedded as a *document* (no `Instruct:`
+  query prefix), same model / 4-bit / `run` as the corpus chunks, so a chunk and a centroid are
+  comparable. tests: `test_run_harrier_centroids.py`.
+- **Assign chunks → topics (offline, no GPU)** — `assign_topics.py` projects each persisted
+  chunk vector through the *identical* μ-centred/whitened scorer (`embed_score.build_scorer`)
+  and assigns it to the nearest centroid; a paper's **dominant topic** is the max-pool of its
+  chunks. Writes the `chunk_topics` table. tests: `test_assign_topics.py`.
+- **Per-topic ρ** — `embed_independent.per_topic_spearman` recomputes ρ(e, verdict) within each
+  topic stratum (≥10 labelled papers shown), rendered in `report.md`. tests:
+  `test_embed_independent.py`.
 
 ## 3. MySQL schema (`db.py`) — system of record
 
@@ -145,6 +170,9 @@ adds the column + rebuilds PKs on the existing DB. Tables:
   criterion)` with `verdict`, `confidence`, `model` (the *judge* model), `run_ts`. The LLM
   judge is independent of the embedding model, so verdicts are judged once and shared by
   every run via a JOIN on `(code_number, pdf_path, criterion)`; `update_verdicts` upserts here.
+- **`topic_centroids`** (`run, topic_id, label, dim, vec`) and **`chunk_topics`** (`run,
+  pdf_path, chunk_idx, method, topic_id, sim`) — the scientometric topic-stratification layer
+  (§2.1); both run-keyed.
 - **`pole_separation`** (incl. centred `within` rows), **`control_scores`**, **`run_meta`**
   (lever params + scoring mode) — all run-scoped.
 
@@ -219,6 +247,16 @@ still only 2 positives → directional, not precise). `chunk` edges out `full`/`
 everywhere. Pole widths still overlap (`within`: `arbitrariness` best-separated), so
 **ranks are trustworthy, absolute magnitudes less so**.
 
+### Per-topic ρ (2026-06-15) — stratified by nearest scientometric topic
+Stratifying ρ by dominant topic (§2.1; `assign_topics.py` → `report.md`) holds the topicality
+halo fixed, so a positive within-topic ρ is stronger evidence than the pooled ρ above. The
+largest strata are the neuro/metaphorical topics (Cognitive Signal n=39, Histonic Code 26,
+Neural Circuits 21), where the concrete criteria are flat `not_met` (ρ frequently `n/a` — no
+verdict variation in-stratum); only `arbitrariness` varies there (e.g. Regulatory Code +0.52,
+Cognitive Signal +0.36). The molecular "met" codes sit in the **low-frequency tail**.
+**Diagnostic only** — strata are small (≥10 shown) and the verdicts synthetic (§6): read
+direction, not magnitude.
+
 ## 6. ⚠️ Major caveats (the verdicts are not ground truth)
 
 The ρ above measures agreement between two imperfect axes, not correctness. The verdicts
@@ -236,7 +274,7 @@ set:
 ## 7. Development, testing & reporting rules
 
 1. **TDD** — for any new or changed functionality, write a failing test first, then the
-   change. The suite is **178 tests, fully offline** (fake encoder, no GPU/DB needed).
+   change. The suite is **202 tests, fully offline** (fake encoder, no GPU/DB needed).
 2. **Language** — pythonic, readable; prefer numpy for data management.
 3. **Logging** — pythonic `logging`, DEBUG/INFO chosen by criticality.
 4. **Commit cadence** — pause and commit after each completed logical unit; small,
