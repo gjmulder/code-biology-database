@@ -38,6 +38,62 @@ def test_iter_papers_dedupes_shared_pdf(monkeypatch):
     assert len(papers) == 1  # same DOI -> same PDF -> one paper
 
 
+# --- graded per-chunk prompt (topic-grounded, control-anchored, calibrated) ---
+
+_CONTROLS = {
+    "genetic_code_positive": "codons and amino acids are two worlds bridged by tRNA, "
+                             "the assignment is an arbitrary convention",
+    "deterministic_chemistry_negative": "stereochemical lock-and-key, physically determined",
+}
+
+
+def _build(criterion):
+    return cj.build_chunk_prompt(
+        chunk_text="The histone marks form a combinatorial pattern read by effector proteins.",
+        criterion=criterion,
+        topic_label="Histonic Code",
+        topic_blurb="Histone modifications and chromatin signalling.",
+        controls=_CONTROLS,
+    )
+
+
+def test_build_chunk_prompt_injects_calibration_sections():
+    p = _build("two_worlds")
+    # the compressed skeptical-analyst calibration must be present
+    assert cj.CALIBRATION_PREAMBLE in p
+    # premise check: the research-area label is context, not evidence
+    assert "context" in p.lower() and "evidence" in p.lower()
+    # ground-or-abstain wording + the Low/Medium/High operational scale
+    assert "Low" in p and "Medium" in p and "High" in p
+
+
+def test_build_chunk_prompt_injects_topic_and_controls():
+    p = _build("adaptors")
+    assert "Histonic Code" in p
+    assert "Histone modifications and chromatin signalling." in p
+    # both control anchors appear (AGREE exemplar + DISAGREE exemplar)
+    assert _CONTROLS["genetic_code_positive"] in p
+    assert _CONTROLS["deterministic_chemistry_negative"] in p
+    # the criterion definition is injected
+    assert cj.CRITERIA_DEFS["adaptors"] in p
+    # the passage under judgement is present
+    assert "combinatorial pattern read by effector proteins" in p
+
+
+def test_build_chunk_prompt_has_graded_json_schema():
+    p = _build("two_worlds")
+    for level in ("strongly_disagree", "disagree", "neutral", "agree", "strongly_agree"):
+        assert level in p
+    assert "agreement" in p and "confidence" in p
+    assert "evidence_quote" in p and "reasoning" in p
+
+
+def test_build_chunk_prompt_steelman_only_for_arbitrariness():
+    assert cj.STEELMAN_ARBITRARINESS in _build("arbitrariness")
+    assert cj.STEELMAN_ARBITRARINESS not in _build("two_worlds")
+    assert cj.STEELMAN_ARBITRARINESS not in _build("adaptors")
+
+
 # --- JSON parsing ----------------------------------------------------------
 
 def test_parse_judgment_reads_plain_json():

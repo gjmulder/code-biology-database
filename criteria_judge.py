@@ -170,6 +170,85 @@ def build_user_prompt(text, keys):
     )
 
 
+# --- graded per-chunk judging (topic-grounded, control-anchored, calibrated) ---
+#
+# The redesigned judge axis (CLAUDE.md §6/§8 — label quality is the binding constraint)
+# scores ONE criterion against ONE 8192-token chunk at a time, on a graded agreement scale
+# with a calibrated confidence, grounding any positive in a verbatim quote. The categorical
+# verdict the rest of the pipeline consumes is *derived* from the aggregated graded score
+# (see aggregate_graded). The prompt compresses the skeptical-analyst calibration protocol:
+# premise check, ground-or-abstain, an operational Low/Medium/High scale, and (only for the
+# contested arbitrariness criterion) a steelman so the model weighs the strongest counter.
+
+GRADED_SYSTEM_PROMPT = (
+    "You are a Code Biology analyst assessing whether a single passage from a paper "
+    "ARGUES that the biological system it studies meets one specific criterion for an "
+    "organic code. Judge the passage's claims and evidence, not whether the claim is "
+    "objectively true. Reply with ONLY a JSON object."
+)
+
+CALIBRATION_PREAMBLE = (
+    "Calibration protocol (follow exactly):\n"
+    "1. Premise check — the research area / topic label below is CONTEXT, not EVIDENCE. "
+    "A passage being about a coding-adjacent field does not by itself argue any criterion "
+    "is met; judge only what THIS passage actually claims.\n"
+    "2. Ground or abstain — to answer 'agree' or 'strongly_agree' you MUST copy a verbatim "
+    "quote from the passage that supports it into evidence_quote. If no such quote exists, "
+    "abstain to 'neutral' with an empty evidence_quote. Do not infer beyond the text.\n"
+    "3. Calibrated confidence (operational): "
+    "High = would act on this without further checking; "
+    "Medium = directionally clear, verify before relying on it; "
+    "Low = a hypothesis, not a conclusion.\n"
+    "4. The two anchors below are reference poles: the AGREE anchor is a textbook passage "
+    "that clearly argues the criterion; the DISAGREE anchor clearly argues against it. "
+    "Calibrate your agreement level relative to these."
+)
+
+STEELMAN_ARBITRARINESS = (
+    "Steelman (arbitrariness is the most contested criterion): the strongest case AGAINST "
+    "arbitrariness is that the mapping is physically/chemically determined — a stereochemical "
+    "or thermodynamic necessity rather than a convention. Only answer 'agree'/'strongly_agree' "
+    "if the passage argues the rule is conventional and COULD be otherwise without breaking a "
+    "law of chemistry, having weighed that counter-argument."
+)
+
+GRADED_AGREEMENT_LEVELS = (
+    "strongly_disagree", "disagree", "neutral", "agree", "strongly_agree",
+)
+
+
+def build_chunk_prompt(chunk_text, criterion, topic_label, topic_blurb, controls):
+    """Build the per-chunk, per-criterion graded prompt.
+
+    Layers (plan §Design): calibration preamble → topic grounding (dominant-topic label +
+    centroid blurb, as CONTEXT only) → AGREE/DISAGREE control anchors → criterion definition
+    → strict graded JSON schema → the passage. The arbitrariness steelman is injected only
+    for that criterion (its two controls are precisely its two poles)."""
+    levels = "|".join(GRADED_AGREEMENT_LEVELS)
+    schema = (
+        '{"agreement": "%s", "confidence": "Low|Medium|High", '
+        '"evidence_quote": "<verbatim quote from the passage, or empty>", '
+        '"reasoning": "<1-2 sentences>"}' % levels
+    )
+    parts = [
+        CALIBRATION_PREAMBLE,
+        f"Research area (CONTEXT ONLY): {topic_label} — {topic_blurb}",
+        "AGREE anchor (clearly argues the criterion):\n"
+        f"  {controls['genetic_code_positive']}",
+        "DISAGREE anchor (clearly argues against the criterion):\n"
+        f"  {controls['deterministic_chemistry_negative']}",
+        f'Criterion under judgement — "{criterion}": {CRITERIA_DEFS[criterion]}',
+    ]
+    if criterion == "arbitrariness":
+        parts.append(STEELMAN_ARBITRARINESS)
+    parts.append(
+        "Does the passage ARGUE that this criterion is met? Answer on the graded scale.\n"
+        f"Return exactly this JSON shape:\n{schema}"
+    )
+    parts.append(f"=== PASSAGE ===\n{chunk_text}")
+    return "\n\n".join(parts)
+
+
 def judge_criteria(text, complete, keys):
     """Judge ``keys`` on ``text`` using a ``complete(system, user, response_format)``
     callable that returns the model's raw text reply. Parses, then grounds each
