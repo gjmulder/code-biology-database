@@ -135,6 +135,52 @@ def grounding_gate(verdict, source_text):
     return downgraded
 
 
+# --- graded parsing + grounding --------------------------------------------
+
+AGREEMENT_SCORE = {
+    "strongly_disagree": -1.0, "disagree": -0.5, "neutral": 0.0,
+    "agree": 0.5, "strongly_agree": 1.0,
+}
+CONFIDENCE_SCORE = {"low": 0.33, "medium": 0.66, "high": 1.0}
+
+
+def parse_graded(raw, criterion):
+    """Parse a single-criterion graded response into a numeric record.
+
+    Maps the ``agreement`` label to a signed score in [-1, 1] and the operational
+    ``confidence`` (Low/Medium/High) to a float; raises :class:`JudgeError` on an invalid
+    or missing agreement. ``criterion`` is accepted for symmetry / error context."""
+    obj = _extract_json(raw)
+    if not isinstance(obj, dict) or "agreement" not in obj:
+        raise JudgeError(f"graded response missing 'agreement' for {criterion!r}: {obj!r}")
+    label = str(obj["agreement"]).strip().lower()
+    if label not in AGREEMENT_SCORE:
+        raise JudgeError(f"invalid agreement {obj['agreement']!r} for {criterion!r}")
+    conf = str(obj.get("confidence", "low")).strip().lower()
+    return {
+        "agreement": AGREEMENT_SCORE[label],
+        "confidence": CONFIDENCE_SCORE.get(conf, CONFIDENCE_SCORE["low"]),
+        "evidence_quote": str(obj.get("evidence_quote", "") or ""),
+        "reasoning": str(obj.get("reasoning", "") or ""),
+    }
+
+
+def graded_grounding_gate(parsed, chunk_text):
+    """Pull a *positive* graded score to neutral (0.0) unless its evidence quote is a
+    verbatim (whitespace-normalised) substring of the chunk. Negatives/neutral pass through
+    untouched — only an ungrounded claim of agreement is a hallucination risk."""
+    if parsed.get("agreement", 0.0) <= 0.0:
+        return parsed
+    quote = _norm_ws(parsed.get("evidence_quote", ""))
+    if quote and quote in _norm_ws(chunk_text):
+        return parsed
+    gated = dict(parsed)
+    gated["agreement"] = 0.0
+    gated["grounding_failed"] = True
+    logger.debug("graded grounding gate neutralised an ungrounded positive (quote not found)")
+    return gated
+
+
 # --- judging ---------------------------------------------------------------
 
 SYSTEM_PROMPT = (

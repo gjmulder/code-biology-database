@@ -94,6 +94,65 @@ def test_build_chunk_prompt_steelman_only_for_arbitrariness():
     assert cj.STEELMAN_ARBITRARINESS not in _build("adaptors")
 
 
+# --- graded parsing + grounding -------------------------------------------
+
+def _graded(agreement, quote="", confidence="High"):
+    return json.dumps({"agreement": agreement, "confidence": confidence,
+                       "evidence_quote": quote, "reasoning": "r"})
+
+
+def test_parse_graded_maps_agreement_to_signed_score():
+    cases = {"strongly_disagree": -1.0, "disagree": -0.5, "neutral": 0.0,
+             "agree": 0.5, "strongly_agree": 1.0}
+    for label, score in cases.items():
+        out = cj.parse_graded(_graded(label), "two_worlds")
+        assert out["agreement"] == score
+
+
+def test_parse_graded_maps_confidence_to_float():
+    assert cj.parse_graded(_graded("agree", confidence="Low"), "adaptors")["confidence"] == 0.33
+    assert cj.parse_graded(_graded("agree", confidence="Medium"), "adaptors")["confidence"] == 0.66
+    assert cj.parse_graded(_graded("agree", confidence="HIGH"), "adaptors")["confidence"] == 1.0
+
+
+def test_parse_graded_tolerates_fence_and_keeps_quote():
+    raw = "```json\n" + _graded("strongly_agree", quote="codons map to amino acids") + "\n```"
+    out = cj.parse_graded(raw, "two_worlds")
+    assert out["agreement"] == 1.0
+    assert out["evidence_quote"] == "codons map to amino acids"
+
+
+def test_parse_graded_raises_on_invalid_agreement():
+    with pytest.raises(cj.JudgeError):
+        cj.parse_graded(_graded("maybe"), "two_worlds")
+
+
+def test_graded_grounding_gate_keeps_grounded_positive():
+    chunk = "Here codons and amino acids form two worlds."
+    parsed = cj.parse_graded(_graded("agree", quote="codons and amino acids form two worlds"),
+                             "two_worlds")
+    gated = cj.graded_grounding_gate(parsed, chunk)
+    assert gated["agreement"] == 0.5
+    assert not gated.get("grounding_failed")
+
+
+def test_graded_grounding_gate_neutralises_ungrounded_positive():
+    chunk = "The passage is about chromatin marks."
+    parsed = cj.parse_graded(_graded("strongly_agree", quote="codons and amino acids"),
+                             "two_worlds")
+    gated = cj.graded_grounding_gate(parsed, chunk)
+    assert gated["agreement"] == 0.0          # pulled to neutral, quote not in chunk
+    assert gated["grounding_failed"] is True
+
+
+def test_graded_grounding_gate_ignores_non_positive():
+    chunk = "anything"
+    parsed = cj.parse_graded(_graded("disagree", quote="not in chunk"), "two_worlds")
+    gated = cj.graded_grounding_gate(parsed, chunk)
+    assert gated["agreement"] == -0.5         # negatives need no grounding
+    assert not gated.get("grounding_failed")
+
+
 # --- JSON parsing ----------------------------------------------------------
 
 def test_parse_judgment_reads_plain_json():
