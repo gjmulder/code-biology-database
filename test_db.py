@@ -155,6 +155,61 @@ def test_within_rows_store_pole_width_under_within():
     assert ("within", "adaptors", 0.64, "t", "baseline") in rows
 
 
+CENTROIDS_OUT = {
+    "model": "harrier",
+    "dim": 3,
+    "run": "baseline",
+    "centroids": [
+        {"topic_id": 3, "label": "Genetic Code", "vec": [0.1, 0.2, 0.3]},
+        {"topic_id": 18, "label": "Histone Code", "vec": [0.4, 0.5, 0.6]},
+    ],
+}
+
+
+def test_topic_centroids_to_rows_grain():
+    rows = db.topic_centroids_to_rows(CENTROIDS_OUT, run_ts="t")
+    # one row per centroid; shape (topic_id, label, dim, vec_blob, run_ts, run)
+    assert len(rows) == 2
+    gec = next(r for r in rows if r[0] == 3)
+    assert gec[1] == "Genetic Code"
+    assert gec[2] == 3 and gec[4] == "t" and gec[5] == "baseline"
+    assert np.allclose(db.unpack_vec(gec[3]), [0.1, 0.2, 0.3])
+
+
+def test_topic_centroids_to_rows_run_overridable_and_empty():
+    rows = db.topic_centroids_to_rows(CENTROIDS_OUT, run_ts="t", run="gte-qwen2")
+    assert all(r[5] == "gte-qwen2" for r in rows)
+    assert db.topic_centroids_to_rows({"centroids": []}, run_ts="t") == []
+
+
+ASSIGNMENTS = {
+    "pdfs/a.pdf": {"chunks": [(0, 3, 0.42), (1, 18, 0.31)],
+                   "dominant": 3, "affinity": {3: 0.42, 18: 0.31}},
+    "pdfs/b.pdf": {"chunks": [(0, 9, 0.27)],
+                   "dominant": 9, "affinity": {9: 0.27}},
+}
+CODES = {"pdfs/a.pdf": 233, "pdfs/b.pdf": 7}
+
+
+def test_chunk_topic_rows_grain():
+    rows = db.chunk_topic_rows(ASSIGNMENTS, CODES, run_ts="t")
+    # one row per chunk: 2 + 1 = 3; shape
+    # (code_number, pdf_path, method, chunk_idx, topic_id, sim, run_ts, run)
+    assert len(rows) == 3
+    a0 = next(r for r in rows if r[1] == "pdfs/a.pdf" and r[3] == 0)
+    assert a0[0] == 233 and a0[2] == "chunk" and a0[4] == 3
+    assert a0[5] == 0.42 and a0[6] == "t" and a0[7] == "baseline"
+    b0 = next(r for r in rows if r[1] == "pdfs/b.pdf")
+    assert b0[0] == 7 and b0[4] == 9 and b0[3] == 0
+
+
+def test_chunk_topic_rows_method_and_run_overridable():
+    rows = db.chunk_topic_rows(ASSIGNMENTS, CODES, run_ts="t",
+                               method="full", run="gte-qwen2")
+    assert all(r[2] == "full" and r[7] == "gte-qwen2" for r in rows)
+    assert db.chunk_topic_rows({}, {}, run_ts="t") == []
+
+
 def test_verdict_update_rows_one_row_per_paper_criterion():
     # judged records (criteria_judge shape): verdict/confidence per criterion.
     records = [{

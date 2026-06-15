@@ -226,3 +226,4 @@ Code_Biology_PDFs/
 # Transient embedding transport artifacts (MySQL is the system of record)
 embed_in.json
 embed_out.json
+centroids_out.json

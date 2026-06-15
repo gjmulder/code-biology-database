@@ -121,6 +121,36 @@ DDL = [
         PRIMARY KEY (run, criterion, pole)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
+    # The 24 scientometric topic centroids (Paredes & Prinz 2025), embedded with the
+    # SAME model/precision/run as the corpus chunks so a paper chunk can be assigned to
+    # its nearest topic (centred nearest-centroid). One raw vector per topic, per run.
+    """
+    CREATE TABLE IF NOT EXISTS topic_centroids (
+        run       VARCHAR(64)  NOT NULL DEFAULT 'baseline',
+        topic_id  INT          NOT NULL,
+        label     VARCHAR(128),
+        dim       INT          NOT NULL,
+        vec       LONGBLOB     NOT NULL,   -- float32 little-endian bytes
+        run_ts    DATETIME,
+        PRIMARY KEY (run, topic_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
+    # Per-chunk nearest-topic assignment (assign_topics.py): each chunk's argmax topic
+    # and its cosine in the centred space. Lets the report stratify ρ by a paper's
+    # (max-pooled) dominant topic without re-deriving it. Run/method-keyed.
+    """
+    CREATE TABLE IF NOT EXISTS chunk_topics (
+        run         VARCHAR(64) NOT NULL DEFAULT 'baseline',
+        code_number INT         NOT NULL,
+        pdf_path    VARCHAR(512) NOT NULL,
+        method      VARCHAR(16) NOT NULL,
+        chunk_idx   INT         NOT NULL,
+        topic_id    INT         NOT NULL,
+        sim         DOUBLE      NOT NULL,
+        run_ts      DATETIME,
+        PRIMARY KEY (run, code_number, pdf_path, method, chunk_idx)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
 ]
 
 
@@ -288,6 +318,29 @@ def pole_vectors_to_rows(out, run_ts, run="baseline"):
             for pole, v in poles.items()]
 
 
+def topic_centroids_to_rows(out, run_ts, run="baseline"):
+    """``out['centroids'] = [{topic_id, label, vec}, ...]`` → row tuples
+    ``(topic_id, label, dim, vec_blob, run_ts, run)``.
+
+    One row per scientometric topic centroid; the vector is packed to float32 bytes
+    like every other raw-vector table. Empty/absent → no rows."""
+    return [(c["topic_id"], c.get("label"), len(c["vec"]),
+             pack_vec(c["vec"]), run_ts, run)
+            for c in out.get("centroids", [])]
+
+
+def chunk_topic_rows(assignments, codes, run_ts, method="chunk", run="baseline"):
+    """``assignments[pid]['chunks'] = [(chunk_idx, topic_id, sim), ...]`` → row tuples
+    ``(code_number, pdf_path, method, chunk_idx, topic_id, sim, run_ts, run)``.
+
+    One row per chunk assignment (``assign_topics.build_assignments`` output);
+    ``codes[pid] = code_number``. The paper's dominant topic is recoverable by max-pool
+    over these rows, so only the per-chunk grain is stored. Empty → no rows."""
+    return [(codes.get(pid), pid, method, idx, tid, float(sim), run_ts, run)
+            for pid, rec in assignments.items()
+            for idx, tid, sim in rec["chunks"]]
+
+
 def recompute_score_rows(scores, codes, run_ts, run="baseline"):
     """Leverred-``e`` rows from the offline recompute → ``(code_number, pdf_path,
     method, criterion, e, run_ts, run)`` for an **e-only** upsert that preserves the
@@ -441,6 +494,70 @@ def fetch_control_vectors(conn, run="baseline"):
     with conn.cursor() as c:
         c.execute("SELECT name,vec FROM control_vectors WHERE run=%s", (run,))
         return {name: unpack_vec(blob) for name, blob in c.fetchall()}
+
+
+def store_topic_centroids(conn, out, run="baseline"):
+    """Upsert the embedded topic centroids under ``run`` (idempotent).
+
+    ``out`` is the ``run_harrier_centroids`` transport payload. The ``run`` defaults to
+    ``baseline`` so the centroids land in the same space as the harrier corpus chunks;
+    pass ``out['run']`` through the caller to keep them aligned. Returns rows written."""
+    import datetime
+    init_schema(conn)
+    run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    rows = topic_centroids_to_rows(out, run_ts, run)
+    with conn.cursor() as c:
+        c.executemany(
+            "INSERT INTO topic_centroids (topic_id,label,dim,vec,run_ts,run) "
+            "VALUES (%s,%s,%s,%s,%s,%s) AS new "
+            "ON DUPLICATE KEY UPDATE label=new.label, dim=new.dim, vec=new.vec, "
+            "run_ts=new.run_ts",
+            rows)
+    conn.commit()
+    return len(rows)
+
+
+def fetch_topic_centroids(conn, run="baseline"):
+    """Load topic centroids for one ``run`` → ``{topic_id: {'label': str,
+    'vec': np.ndarray}}`` (empty if none stored)."""
+    with conn.cursor() as c:
+        c.execute("SELECT topic_id,label,vec FROM topic_centroids WHERE run=%s", (run,))
+        return {tid: {"label": label, "vec": unpack_vec(blob)}
+                for tid, label, blob in c.fetchall()}
+
+
+def store_chunk_topics(conn, assignments, codes, method="chunk", run="baseline"):
+    """Upsert per-chunk topic assignments under ``(run, method)`` (idempotent).
+
+    ``assignments`` is the :func:`assign_topics.build_assignments` output; ``codes`` maps
+    ``pdf_path`` → ``code_number``. Returns rows written."""
+    import datetime
+    init_schema(conn)
+    run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    rows = chunk_topic_rows(assignments, codes, run_ts, method=method, run=run)
+    with conn.cursor() as c:
+        c.executemany(
+            "INSERT INTO chunk_topics "
+            "(code_number,pdf_path,method,chunk_idx,topic_id,sim,run_ts,run) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) AS new "
+            "ON DUPLICATE KEY UPDATE topic_id=new.topic_id, sim=new.sim, "
+            "run_ts=new.run_ts",
+            rows)
+    conn.commit()
+    return len(rows)
+
+
+def fetch_chunk_topics(conn, run="baseline", method="chunk"):
+    """Load chunk assignments for one ``(run, method)`` → ``{pdf_path:
+    [(chunk_idx, topic_id, sim), ...]}`` ordered by ``chunk_idx`` (empty if none)."""
+    with conn.cursor() as c:
+        c.execute("SELECT pdf_path,chunk_idx,topic_id,sim FROM chunk_topics "
+                  "WHERE run=%s AND method=%s ORDER BY pdf_path,chunk_idx",
+                  (run, method))
+        out = {}
+        for pid, idx, tid, sim in c.fetchall():
+            out.setdefault(pid, []).append((idx, tid, sim))
+        return out
 
 
 def delete_score_rows(conn, pids, run="baseline"):
