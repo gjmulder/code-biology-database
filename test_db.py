@@ -222,13 +222,24 @@ def test_verdict_update_rows_one_row_per_paper_criterion():
     }]
     rows = db.verdict_update_rows(records, run_ts="t")
     # repointed at the run-agnostic `verdicts` table: one row per (paper, criterion),
-    # tuple `(code_number, pdf_path, criterion, verdict, confidence, model, run_ts)`.
+    # tuple `(code_number, pdf_path, criterion, verdict, confidence, graded, model, run_ts)`.
     # No method fan-out, no run, no embedding model. The judge model isn't carried on the
-    # record so `model` is None; code_number is coerced to int.
-    assert (428, "pdfs/x.pdf", "two_worlds", "met", 0.95, None, "t") in rows
-    assert (428, "pdfs/x.pdf", "adaptors", "not_met", 1.0, None, "t") in rows
-    assert (428, "pdfs/x.pdf", "arbitrariness", "unclear", 0.7, None, "t") in rows
+    # record so `model` is None; the old categorical path carries no graded score so it is
+    # None; code_number is coerced to int.
+    assert (428, "pdfs/x.pdf", "two_worlds", "met", 0.95, None, None, "t") in rows
+    assert (428, "pdfs/x.pdf", "adaptors", "not_met", 1.0, None, None, "t") in rows
+    assert (428, "pdfs/x.pdf", "arbitrariness", "unclear", 0.7, None, None, "t") in rows
     assert len(rows) == 3
+
+
+def test_verdict_update_rows_carries_graded_when_present():
+    # the graded judge path attaches a per-paper graded_max alongside the derived verdict
+    records = [{
+        "code_number": "9", "pdf_path": "pdfs/g.pdf",
+        "criteria": {"two_worlds": {"verdict": "met", "confidence": 0.66, "graded": 0.5}},
+    }]
+    rows = db.verdict_update_rows(records, run_ts="t")
+    assert rows == [(9, "pdfs/g.pdf", "two_worlds", "met", 0.66, 0.5, None, "t")]
 
 
 def test_verdict_update_rows_skips_criteria_without_a_verdict():
@@ -240,4 +251,28 @@ def test_verdict_update_rows_skips_criteria_without_a_verdict():
         },
     }]
     rows = db.verdict_update_rows(records, run_ts="t")
-    assert rows == [(21, "pdfs/y.pdf", "two_worlds", "met", 0.9, None, "t")]
+    assert rows == [(21, "pdfs/y.pdf", "two_worlds", "met", 0.9, None, None, "t")]
+
+
+def test_chunk_verdict_rows_grain_and_keying():
+    # flat per-chunk graded records -> one chunk_verdicts row each, tuple
+    # (code_number, pdf_path, criterion, chunk_idx, agreement, confidence, evidence_quote,
+    #  model, run_ts); code_number coerced to int, model defaults None.
+    records = [
+        {"code_number": "5", "pdf_path": "pdfs/a.pdf", "criterion": "two_worlds",
+         "chunk_idx": 0, "agreement": 0.5, "confidence": 0.66, "evidence_quote": "q0"},
+        {"code_number": "5", "pdf_path": "pdfs/a.pdf", "criterion": "two_worlds",
+         "chunk_idx": 1, "agreement": -0.5, "confidence": 0.33, "evidence_quote": ""},
+    ]
+    rows = db.chunk_verdict_rows(records, run_ts="t")
+    assert (5, "pdfs/a.pdf", "two_worlds", 0, 0.5, 0.66, "q0", None, "t") in rows
+    assert (5, "pdfs/a.pdf", "two_worlds", 1, -0.5, 0.33, "", None, "t") in rows
+    assert len(rows) == 2
+
+
+def test_chunk_verdict_rows_carries_model():
+    records = [{"code_number": "1", "pdf_path": "p", "criterion": "adaptors",
+                "chunk_idx": 0, "agreement": 1.0, "confidence": 1.0,
+                "evidence_quote": "x"}]
+    rows = db.chunk_verdict_rows(records, run_ts="t", model="gemma-4-31b")
+    assert rows[0] == (1, "p", "adaptors", 0, 1.0, 1.0, "x", "gemma-4-31b", "t")

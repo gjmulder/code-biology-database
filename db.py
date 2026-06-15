@@ -47,9 +47,29 @@ DDL = [
         criterion   VARCHAR(32)  NOT NULL,
         verdict     VARCHAR(16),
         confidence  DOUBLE,
+        graded      DOUBLE,                  -- graded_max (graded judge axis); NULL for the
+                                             -- old categorical path
         model       VARCHAR(128),
         run_ts      DATETIME,
         PRIMARY KEY (code_number, pdf_path, criterion)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
+    # Run-agnostic per-chunk graded judge output (diagnostics + a future chunk-level join to
+    # per-chunk `e`): one row per (paper, criterion, chunk_idx). ``agreement`` is the signed
+    # graded score in [-1,1], ``confidence`` the operational Low/Med/High as a float, and a
+    # positive agreement carries the verbatim ``evidence_quote`` that grounded it.
+    """
+    CREATE TABLE IF NOT EXISTS chunk_verdicts (
+        code_number    INT          NOT NULL,
+        pdf_path       VARCHAR(255) NOT NULL,
+        criterion      VARCHAR(32)  NOT NULL,
+        chunk_idx      INT          NOT NULL,
+        agreement      DOUBLE,
+        confidence     DOUBLE,
+        evidence_quote TEXT,
+        model          VARCHAR(128),
+        run_ts         DATETIME,
+        PRIMARY KEY (code_number, pdf_path, criterion, chunk_idx)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
     """
@@ -238,6 +258,10 @@ def migrate_runs(conn):
                 "confidence=VALUES(confidence), run_ts=VALUES(run_ts)")
             c.execute("ALTER TABLE embedding_scores "
                       "DROP COLUMN verdict, DROP COLUMN confidence")
+        # Graded judge axis: add `verdicts.graded` to a pre-graded DB (guarded no-op once
+        # present; fresh DBs get it from the DDL above). chunk_verdicts is created by DDL.
+        if not _has_column(c, "verdicts", "graded"):
+            c.execute("ALTER TABLE verdicts ADD COLUMN graded DOUBLE AFTER confidence")
     conn.commit()
 
 
@@ -354,11 +378,12 @@ def recompute_score_rows(scores, codes, run_ts, run="baseline"):
 def verdict_update_rows(records, run_ts=None, model=None):
     """Judged ``criteria_judge`` records → tuples for the run-agnostic ``verdicts`` table.
 
-    Each tuple is ``(code_number, pdf_path, criterion, verdict, confidence, model,
+    Each tuple is ``(code_number, pdf_path, criterion, verdict, confidence, graded, model,
     run_ts)`` — one row per (paper, criterion), with no embedding method or run (the
-    verdict is shared by every embedding run via a join). ``model`` is the judge model
-    (not carried on the record → ``None`` by default). Criteria with no ``verdict`` are
-    skipped so a missing judgment never clobbers an existing one."""
+    verdict is shared by every embedding run via a join). ``graded`` is the graded judge
+    axis's ``graded_max`` when present (``None`` for the old categorical path). ``model`` is
+    the judge model (not carried on the record → ``None`` by default). Criteria with no
+    ``verdict`` are skipped so a missing judgment never clobbers an existing one."""
     rows = []
     for r in records:
         code = int(r["code_number"])
@@ -367,8 +392,22 @@ def verdict_update_rows(records, run_ts=None, model=None):
             verdict = v.get("verdict")
             if not verdict:
                 continue
-            rows.append((code, pid, crit, verdict, v.get("confidence"), model, run_ts))
+            rows.append((code, pid, crit, verdict, v.get("confidence"),
+                         v.get("graded"), model, run_ts))
     return rows
+
+
+def chunk_verdict_rows(records, run_ts=None, model=None):
+    """Flat per-chunk graded records → tuples for the run-agnostic ``chunk_verdicts`` table.
+
+    Each record is one ``(paper, criterion, chunk_idx)`` graded judgement
+    (``{code_number, pdf_path, criterion, chunk_idx, agreement, confidence,
+    evidence_quote}``) → tuple ``(code_number, pdf_path, criterion, chunk_idx, agreement,
+    confidence, evidence_quote, model, run_ts)``. ``model`` is the judge model."""
+    return [(int(r["code_number"]), r["pdf_path"], r["criterion"], int(r["chunk_idx"]),
+             r.get("agreement"), r.get("confidence"), r.get("evidence_quote", ""),
+             model, run_ts)
+            for r in records]
 
 
 def update_verdicts(conn, records):
@@ -384,13 +423,46 @@ def update_verdicts(conn, records):
     with conn.cursor() as c:
         c.executemany(
             "INSERT INTO verdicts "
-            "(code_number,pdf_path,criterion,verdict,confidence,model,run_ts) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s) AS new "
+            "(code_number,pdf_path,criterion,verdict,confidence,graded,model,run_ts) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) AS new "
             "ON DUPLICATE KEY UPDATE verdict=new.verdict, confidence=new.confidence, "
-            "model=new.model, run_ts=new.run_ts",
+            "graded=new.graded, model=new.model, run_ts=new.run_ts",
             rows)
     conn.commit()
     return len(rows)
+
+
+def store_chunk_verdicts(conn, records, model=None):
+    """Upsert per-chunk graded judgements into the run-agnostic ``chunk_verdicts`` table.
+
+    Returns the number of (paper, criterion, chunk) rows written."""
+    import datetime
+    init_schema(conn)
+    run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    rows = chunk_verdict_rows(records, run_ts=run_ts, model=model)
+    with conn.cursor() as c:
+        c.executemany(
+            "INSERT INTO chunk_verdicts "
+            "(code_number,pdf_path,criterion,chunk_idx,agreement,confidence,"
+            "evidence_quote,model,run_ts) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) AS new "
+            "ON DUPLICATE KEY UPDATE agreement=new.agreement, confidence=new.confidence, "
+            "evidence_quote=new.evidence_quote, model=new.model, run_ts=new.run_ts",
+            rows)
+    conn.commit()
+    return len(rows)
+
+
+def fetch_chunk_verdicts(conn):
+    """Load per-chunk graded judgements → ``{(pdf_path, criterion): [(chunk_idx, agreement,
+    confidence, evidence_quote), ...]}`` ordered by ``chunk_idx`` (empty if none)."""
+    with conn.cursor() as c:
+        c.execute("SELECT pdf_path,criterion,chunk_idx,agreement,confidence,evidence_quote "
+                  "FROM chunk_verdicts ORDER BY pdf_path,criterion,chunk_idx")
+        out = {}
+        for pid, crit, idx, agr, conf, quote in c.fetchall():
+            out.setdefault((pid, crit), []).append((idx, agr, conf, quote))
+        return out
 
 
 def within_rows(within, run_ts, run="baseline"):
