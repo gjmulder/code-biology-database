@@ -1,0 +1,25 @@
+Topic #,Label,Abbreviation,Justification
+0,Morphological Codes,MoC,"Focus on cell differentiation, developmental patterns, and tissue-specific signaling ('code' used metaphorically)."
+1,Genomic Code,GC,"Emphasis on genome structure, genome-wide regulation, and chromatinbased -signaling."
+2,Binding Code,BC,"Key terms relate to molecular interactions, affinity, docking, and structural dynamics."
+3,Genetic Code,GeC,"Direct references to the canonical genetic code, codons, translation, and codon reassignment."
+4,Language Code,LC,"Includes analogies between language and code, linguistic metaphors, and semiotic discussions."
+5,Phosphorylation Code,PhC,"Recurring references to kinase signaling, phosphorylation motifs, and PTM logic."
+6,Pathological Code,PaC,Focuses on disease processes and how 'codes relate to dysregulation or biomarkers.
+7,Chemical Codes,ChC,"Topics about sugar codes, glycosylation, and stereochemical logic of biomolecules."
+8,Regulatory Code,RC,"Centered on transcriptional and epigenetic regulation, including enhancer-promoter logic."
+9,Code Theory,CT,"Theoretical reflections on the concept of 'code' itself, including biosemiotics and formal models."
+10,Synthetic Code,SyC,"Synthetic biology, code engineering, and manipulation of coding logic for design."
+11,Cognitive Signal,COS,"Neural codes, perceptual encoding, and brain-related informational models."
+12,Ubiquitination Code,UBC,"Explores ubiquitin tagging and proteasomal regulation, often framed as coding systems."
+13,Olfactory Code,OIC,"Related to encoding of smells, sensory input processing, and specific neural mappings."
+14,Hox Code,HxC,Direct references to Hox genes and their regulatory logic along developmental axes.
+15,Signal Code,SIC,"General cell signaling pathways, often conceptualized as encoding-decoding systems."
+16,Molecular Codes,MC,"Biochemical codes' like folding, assembly, and structural signaling."
+17,Prebiotic Code,PrC,"Origin-of-life models, early molecular systems, and pre-DNA coding theories."
+18,Histonic Code,HIC,Focused on histone modifications and chromatin states interpreted as regulatory codes.
+19,Neural Circuits,NC,"Neural networks, firing patterns, and encoding in nervous system pathways."
+20,Code Mathematics,CM,"Mathematical formalizations of codes, often with information-theoretic framing."
+21,Code Physics,CP,"Physics-informed approaches to codes, including topology, entropy, and dynamical models."
+22,Code Philosophy,CPh,"Philosophical and epistemological discourse around the nature, meaning, and origin of 'code'."
+23,Lab Methods,LM,"Technical references to protocols, instrumentation, and data pipelines for studying codes."
