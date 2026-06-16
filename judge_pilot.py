@@ -85,6 +85,16 @@ def select_pilot_papers(chunk_topics, n=DEFAULT_TOP):
     return {pid: d for pid, d in doms.items() if d is not None and d in top}
 
 
+def select_rest_papers(chunk_topics, n=DEFAULT_TOP):
+    """The complement of :func:`select_pilot_papers`: every paper with a dominant topic
+    **outside** the top-``n`` strata. This is the molecular "met" tail (CLAUDE.md §9 /
+    Run 5 backlog) — the strata where both axes should carry real signal, judged after the
+    neuro top-``n`` pilot so the two axes can be compared corpus-wide."""
+    doms = paper_dominant_topics(chunk_topics)
+    top = set(top_topic_ids(chunk_topics, n))
+    return {pid: d for pid, d in doms.items() if d is not None and d not in top}
+
+
 # --- triple-keyed resumability ---------------------------------------------
 
 def _chunk_key(record):
@@ -200,6 +210,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--top", type=int, default=DEFAULT_TOP,
                     help="number of most-frequent dominant topics to pilot")
+    ap.add_argument("--rest", action="store_true",
+                    help="judge the COMPLEMENT of the top-N strata (the molecular tail "
+                         "outside the neuro top-N) instead of the top-N themselves")
     ap.add_argument("--run", default="baseline", help="embedding run whose chunk_topics to use")
     ap.add_argument("--method", default="chunk")
     ap.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
@@ -228,12 +241,14 @@ def main():
                 db.fetch_vectors(conn, run=args.run)[2])
     chunk_topics, codes = db.run_with_reconnect(_read)
 
-    selected = select_pilot_papers(chunk_topics, n=args.top)
+    selected = (select_rest_papers(chunk_topics, n=args.top) if args.rest
+                else select_pilot_papers(chunk_topics, n=args.top))
     pids = sorted(selected)
     if args.limit:
         pids = pids[:args.limit]
-    logger.info("pilot: %d papers across top-%d topics %s",
-                len(pids), args.top, top_topic_ids(chunk_topics, n=args.top))
+    logger.info("pilot: %d papers %s top-%d topics %s",
+                len(pids), "OUTSIDE" if args.rest else "across", args.top,
+                top_topic_ids(chunk_topics, n=args.top))
 
     done = load_done(args.checkpoint)
     write_lock = threading.Lock()

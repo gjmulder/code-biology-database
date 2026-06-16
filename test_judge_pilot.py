@@ -59,6 +59,16 @@ def test_select_pilot_papers_keeps_only_top_strata():
     assert selected == {"a.pdf": 11, "b.pdf": 11}
 
 
+def test_select_rest_papers_is_complement_of_top_strata():
+    # top-1 stratum is topic 11 (a, b); the "rest" is everything outside it.
+    rest = jp.select_rest_papers(_chunk_topics(), n=1)
+    assert rest == {"c.pdf": 13, "d.pdf": 18, "e.pdf": 19}
+    # rest and pilot partition the dominant-topic papers with no overlap.
+    pilot = jp.select_pilot_papers(_chunk_topics(), n=1)
+    assert set(rest) | set(pilot) == {"a.pdf", "b.pdf", "c.pdf", "d.pdf", "e.pdf"}
+    assert set(rest) & set(pilot) == set()
+
+
 # --- triple-keyed resumability --------------------------------------------
 
 def test_load_done_keys_on_pdf_chunk_criterion(tmp_path):
