@@ -1,6 +1,8 @@
 """Offline tests for db.py pure transforms (no live MySQL needed)."""
 
 import numpy as np
+import pymysql
+import pytest
 
 import db
 
@@ -302,3 +304,84 @@ def test_prompt_registry_rows_grain():
     entries = [{"prompt_hash": "h1", "criterion": "two_worlds", "prompt_text": "TEMPLATE"}]
     rows = db.prompt_registry_rows(entries, run_ts="t")
     assert rows == [("h1", "two_worlds", "TEMPLATE", "t")]
+
+
+# --- graceful reconnect on transient "server gone away" / "lost connection" ----
+#
+# The persist path (register_prompts -> store_chunk_verdicts -> update_verdicts) is a
+# sequence of *idempotent* units (guarded init_schema + upserts), so a transient MySQL
+# drop mid-write can be recovered by reconnecting and re-running the unit from the top
+# rather than aborting and losing the persist progress.
+
+class _FakeConn:
+    """Records that it was closed; close() must never raise on an already-dead conn."""
+    _next_id = 0
+
+    def __init__(self):
+        self.id = _FakeConn._next_id
+        _FakeConn._next_id += 1
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+def _conn_factory():
+    """Returns (connect_fn, conns) — connect_fn hands out fresh recorded fake conns."""
+    conns = []
+
+    def connect_fn(env=None):
+        c = _FakeConn()
+        conns.append(c)
+        return c
+
+    return connect_fn, conns
+
+
+def test_run_with_reconnect_retries_transient_then_succeeds():
+    connect_fn, conns = _conn_factory()
+    slept = []
+    calls = {"n": 0}
+
+    def work(conn):
+        calls["n"] += 1
+        if calls["n"] < 3:                      # fail the first two attempts
+            raise pymysql.err.OperationalError(2013, "Lost connection during query")
+        return "persisted"
+
+    out = db.run_with_reconnect(work, connect_fn=connect_fn, retries=3,
+                                backoff=0.0, sleep=slept.append)
+    assert out == "persisted"
+    assert calls["n"] == 3
+    assert len(conns) == 3                       # a fresh connection per attempt
+    assert all(c.closed for c in conns)          # every connection closed, even the dead ones
+    assert len(slept) == 2                       # backoff between the two failures
+
+
+def test_run_with_reconnect_reraises_nontransient_immediately():
+    connect_fn, conns = _conn_factory()
+
+    def work(conn):
+        raise pymysql.err.OperationalError(1064, "You have an error in your SQL syntax")
+
+    with pytest.raises(pymysql.err.OperationalError):
+        db.run_with_reconnect(work, connect_fn=connect_fn, retries=3,
+                              backoff=0.0, sleep=lambda s: None)
+    assert len(conns) == 1                        # no reconnect on a non-transient error
+    assert conns[0].closed
+
+
+def test_run_with_reconnect_gives_up_after_retries():
+    connect_fn, conns = _conn_factory()
+    calls = {"n": 0}
+
+    def work(conn):
+        calls["n"] += 1
+        raise pymysql.err.OperationalError(2006, "MySQL server has gone away")
+
+    with pytest.raises(pymysql.err.OperationalError):
+        db.run_with_reconnect(work, connect_fn=connect_fn, retries=2,
+                              backoff=0.0, sleep=lambda s: None)
+    assert calls["n"] == 3                        # initial attempt + 2 retries
+    assert len(conns) == 3
+    assert all(c.closed for c in conns)

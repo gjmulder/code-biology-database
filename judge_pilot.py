@@ -218,61 +218,73 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
     complete = cj.local_complete_factory(host=args.host)
 
-    conn = db.connect()
-    try:
-        chunk_topics = db.fetch_chunk_topics(conn, run=args.run, method=args.method)
-        _, _, codes = db.fetch_vectors(conn, run=args.run)
-        selected = select_pilot_papers(chunk_topics, n=args.top)
-        pids = sorted(selected)
-        if args.limit:
-            pids = pids[:args.limit]
-        logger.info("pilot: %d papers across top-%d topics %s",
-                    len(pids), args.top, top_topic_ids(chunk_topics, n=args.top))
+    # Initial reads (topic assignments + codes) on a short-lived connection. We do NOT hold
+    # this open across the multi-hour judging loop: an idle conn past MySQL ``wait_timeout``
+    # (8h) is silently closed server-side and the next query dies with "lost connection" —
+    # which is exactly what aborted the post-pilot persist. Reads + persist each get their
+    # own fresh connection via db.run_with_reconnect (reconnect + retry on a transient drop).
+    def _read(conn):
+        return (db.fetch_chunk_topics(conn, run=args.run, method=args.method),
+                db.fetch_vectors(conn, run=args.run)[2])
+    chunk_topics, codes = db.run_with_reconnect(_read)
 
-        done = load_done(args.checkpoint)
-        write_lock = threading.Lock()
+    selected = select_pilot_papers(chunk_topics, n=args.top)
+    pids = sorted(selected)
+    if args.limit:
+        pids = pids[:args.limit]
+    logger.info("pilot: %d papers across top-%d topics %s",
+                len(pids), args.top, top_topic_ids(chunk_topics, n=args.top))
 
-        def work(pid):
-            tid = selected[pid]
-            label, blurb = topics.get(tid, (str(tid), ""))
-            full_text = pdf_text.extract_text(pid)
-            meta = _paper_meta_from_codes(pid, codes)
-            return judge_paper_chunks(meta, full_text, tokenizer, label, blurb,
-                                      controls, complete, args.checkpoint, done, write_lock)
+    done = load_done(args.checkpoint)
+    write_lock = threading.Lock()
 
-        all_records = []
-        with ThreadPoolExecutor(max_workers=args.workers) as pool:
-            futures = {pool.submit(work, pid): pid for pid in pids}
-            for n, fut in enumerate(as_completed(futures), 1):
-                pid = futures[fut]
-                try:
-                    all_records.extend(fut.result())
-                except Exception as exc:
-                    logger.warning("skipping paper %s: %s", pid, exc)
-                logger.info("paper %d/%d done (%s)", n, len(pids), pid)
+    def work(pid):
+        tid = selected[pid]
+        label, blurb = topics.get(tid, (str(tid), ""))
+        full_text = pdf_text.extract_text(pid)
+        meta = _paper_meta_from_codes(pid, codes)
+        return judge_paper_chunks(meta, full_text, tokenizer, label, blurb,
+                                  controls, complete, args.checkpoint, done, write_lock)
 
-        # Persist from the *full* checkpoint (resilient to resumed runs), not just this
-        # invocation's records, so aggregation always sees every judged chunk.
-        ckpt_records = _read_checkpoint(args.checkpoint, set(pids))
-        # Stamp prompt provenance: records from an older checkpoint predate the prompt_hash
-        # field, so back-fill it from the live prompt version (correct because persistence
-        # runs under the same code that produced these verdicts), and register the templates.
-        for r in ckpt_records:
-            r.setdefault("prompt_hash", cj.prompt_hash(r["criterion"]))
-        crits = sorted({r["criterion"] for r in ckpt_records})
-        db.register_prompts(conn, [
-            {"prompt_hash": cj.prompt_hash(c), "criterion": c,
-             "prompt_text": cj.prompt_template(c)} for c in crits])
+    # No DB connection is held during judging — all output goes to the JSONL checkpoint
+    # (the system of record), so a drop here costs nothing and persistence reads it back.
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        futures = {pool.submit(work, pid): pid for pid in pids}
+        for n, fut in enumerate(as_completed(futures), 1):
+            pid = futures[fut]
+            try:
+                fut.result()
+            except Exception as exc:
+                logger.warning("skipping paper %s: %s", pid, exc)
+            logger.info("paper %d/%d done (%s)", n, len(pids), pid)
+
+    # Persist from the *full* checkpoint (resilient to resumed runs), not just this
+    # invocation's records, so aggregation always sees every judged chunk.
+    ckpt_records = _read_checkpoint(args.checkpoint, set(pids))
+    # Stamp prompt provenance: records from an older checkpoint predate the prompt_hash
+    # field, so back-fill it from the live prompt version (correct because persistence
+    # runs under the same code that produced these verdicts), and register the templates.
+    for r in ckpt_records:
+        r.setdefault("prompt_hash", cj.prompt_hash(r["criterion"]))
+    crits = sorted({r["criterion"] for r in ckpt_records})
+    prompt_entries = [
+        {"prompt_hash": cj.prompt_hash(c), "criterion": c,
+         "prompt_text": cj.prompt_template(c)} for c in crits]
+    verdict_records = [
+        {**r, "criteria": {k: {**v} for k, v in r["criteria"].items()}}
+        for r in aggregate_to_verdict_records(ckpt_records)]
+
+    # The persist sequence (register_prompts -> store_chunk_verdicts -> update_verdicts) is
+    # idempotent (guarded init_schema + upserts), so run_with_reconnect can safely re-run it
+    # from the top on a fresh connection if the link drops mid-write — no data is lost.
+    def _persist(conn):
+        db.register_prompts(conn, prompt_entries)
         n_chunks = db.store_chunk_verdicts(conn, ckpt_records, model=cj.LOCAL_MODEL)
-        verdict_records = aggregate_to_verdict_records(ckpt_records)
-        n_verdicts = db.update_verdicts(conn, [
-            {**r, "criteria": {k: {**v} for k, v in r["criteria"].items()}}
-            for r in verdict_records
-        ])
-        logger.info("persisted %d chunk_verdicts, %d verdicts (graded + categorical)",
-                    n_chunks, n_verdicts)
-    finally:
-        conn.close()
+        n_verdicts = db.update_verdicts(conn, verdict_records)
+        return n_chunks, n_verdicts
+    n_chunks, n_verdicts = db.run_with_reconnect(_persist)
+    logger.info("persisted %d chunk_verdicts, %d verdicts (graded + categorical)",
+                n_chunks, n_verdicts)
 
 
 def _read_checkpoint(checkpoint_path, pids=None):

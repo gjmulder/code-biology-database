@@ -11,13 +11,23 @@ DB_USER DB_PASS``. The pure ``*_rows`` transforms are unit-tested offline; the S
 runs against the live server on asushimu.
 """
 
+import logging
 import os
 import pathlib
+import time
 
 import numpy as np
 import pymysql
 
+logger = logging.getLogger(__name__)
+
 CRITERIA = ["two_worlds", "adaptors", "arbitrariness"]
+
+# MySQL errnos for a connection that died *under* an in-flight query (as opposed to a
+# logic/SQL error): the server went away or the link dropped mid-statement. These are the
+# only failures :func:`run_with_reconnect` will reconnect-and-retry on — anything else
+# (syntax error, constraint violation, …) is a real bug and must surface immediately.
+TRANSIENT_ERRNOS = (2006, 2013)  # 2006 = server has gone away, 2013 = lost connection
 
 # Every embedding-side table is **run-scoped**: a ``run`` column (``baseline`` for the
 # harrier vectors, e.g. ``gte-qwen2`` for a model swap) is the leading PK column so two
@@ -222,6 +232,40 @@ def connect(env=None):
         user=env["DB_USER"], password=env["DB_PASS"], database=env["DB_NAME"],
         charset="utf8mb4", autocommit=False,
     )
+
+
+def run_with_reconnect(work, *, connect_fn=None, env=None, retries=3,
+                       backoff=2.0, sleep=None):
+    """Run ``work(conn)`` on a fresh connection, reconnecting + retrying on a transient
+    'server gone away' / 'lost connection' drop (the failure that killed the post-pilot
+    persist over the network to asushimu).
+
+    ``work`` **must be idempotent** — on a drop it is re-executed from the top on a brand
+    new connection — which our persist units are (guarded :func:`init_schema` + upserts),
+    so no data is double-counted or lost. Owns the connection lifecycle: a fresh conn per
+    attempt, always closed (a dead conn's ``close`` is best-effort). Only
+    :data:`TRANSIENT_ERRNOS` are retried; every other error propagates immediately. After
+    ``retries`` exhausted, the last transient error is re-raised."""
+    connect_fn = connect_fn or connect
+    sleep = sleep or time.sleep
+    attempt = 0
+    while True:
+        conn = connect_fn(env)
+        try:
+            return work(conn)
+        except pymysql.err.OperationalError as exc:
+            errno = exc.args[0] if exc.args else None
+            if errno not in TRANSIENT_ERRNOS or attempt >= retries:
+                raise
+            attempt += 1
+            logger.warning("transient MySQL error %s (%s); reconnecting, attempt %d/%d",
+                           errno, exc.args[1] if len(exc.args) > 1 else "", attempt, retries)
+            sleep(backoff * attempt)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # Pre-``run``-column primary keys, used by the live migration to rebuild each PK with
