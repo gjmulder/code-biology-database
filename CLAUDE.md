@@ -270,11 +270,15 @@ set:
 - **Next quality step:** re-tune the judge prompts for paragraph-level context, then a
   single higher-quality run sending **all three** criteria to Nemotron (≈ $9). A gold-set
   κ/F1 validation of the verdicts themselves remains future work.
+- **Judge redesign (graded, per-chunk, grounded) — piloted 2026-06-16, see §9.** The
+  literal-latching and the dead `confidence` axis above are exactly what the redesign targets;
+  the pilot confirms the grounding gate kills ungrounded positives and moves gradation onto an
+  `agreement` (−1…+1) axis.
 
 ## 7. Development, testing & reporting rules
 
 1. **TDD** — for any new or changed functionality, write a failing test first, then the
-   change. The suite is **202 tests, fully offline** (fake encoder, no GPU/DB needed).
+   change. The suite is **239 tests, fully offline** (fake encoder/tokenizer, no GPU/DB needed).
 2. **Language** — pythonic, readable; prefer numpy for data management.
 3. **Logging** — pythonic `logging`, DEBUG/INFO chosen by criticality.
 4. **Commit cadence** — pause and commit after each completed logical unit; small,
@@ -309,3 +313,43 @@ tested but the GPU pass was not run** — shelved deliberately:
   **label quality, not the embedding** — the verdicts are unreliable (§6) and arbitrariness
   has only 2 positives, so ρ can't even adjudicate fine gains. The next real step is a
   re-tuned judge + a gold-set validation, not more embedding-side tuning.
+
+## 9. Judge redesign pilot — graded, per-chunk, topic-grounded, control-anchored (2026-06-16)
+
+Acting on §6/§8 ("the constraint is label quality"), the LLM judge was rebuilt as a **graded**
+(−1…+1 `agreement`), **per-chunk** (the *exact* 8192-token harrier embedding windows reproduced
+via `chunk_text.reproduce_chunks` → tokenizer-aligned to `doc_vectors`), **topic-grounded**
+(dominant scientometric topic injected as *context, not evidence*), **control-anchored**
+(`genetic_code_positive` / `deterministic_chemistry_negative` poles), **calibrated** judge.
+A grounding gate pulls any positive whose `evidence_quote` is not verbatim in the chunk back to
+`0.0`; `aggregate_graded` max-pools chunks → `(graded_max, graded_mean, confidence, categorical)`
+with `graded_max ≥ +0.5 → met`, `≤ 0.0 → not_met`, else `unclear`. Schema:
+`verdicts.graded DOUBLE` + new run-agnostic `chunk_verdicts` table (per-chunk diagnostics).
+Build steps complete + tested; **distribution-comparison validation only, no gold set (locked).**
+
+**Pipeline:** `judge_pilot.py` (driver, top-N topics, resumable `pilot_verdicts.jsonl`
+checkpoint) → `compare_verdicts.py --snapshot old.json` *before* / `--old old.json` *after*
+(the new axis is read from the never-overwritten `chunk_verdicts`). Free local Gemma-4-31B on
+`start_llama_pilot.sh` (NO MTP, `--parallel 2 --ctx-size 32768`); driver runs locally with the
+CPU-only harrier tokenizer (`harrier_tokenizer/`, `--tokenizer harrier_tokenizer`).
+
+**Pilot run (top-4 topics = 102 papers; neuro/metaphorical strata `[11,18,19,13]`).** 1330
+chunk cells judged (2 dropped to malformed JSON, clean per-cell isolation). Categorical
+(old→new): two_worlds met 0→0 / unclear 1→0 / not_met 101→102; adaptors met 1→**3** / 1→0 /
+100→99; arbitrariness met 1→**2** / 5→0 / 96→100. Graded spread: two_worlds flat 0.0 (std 0);
+adaptors std 0.12; arbitrariness std 0.11. Pooled ρ(graded, e) ≈ ρ(cat, e), weak-positive
+where defined (two_worlds `n/a`, no variation).
+
+**Read (honest):**
+- **The two design risks did not materialise.** Halo-injection guard held — **7/7 positive
+  cells are quote-grounded** (e.g. histone "reader proteins (adapters)", lncRNA "address
+  code"), zero ungrounded false positives. The new judge is *more* skeptical than the old: it
+  collapsed the wishy-washy `unclear` bucket while surfacing a few *more* genuinely-grounded
+  `met`. Gradation moved off the dead `confidence` field onto `agreement`, as intended.
+- **Gradation is inconclusive in *this* stratum by design.** The top-4 are the neuro topics
+  §5 already flags as flat `not_met` on concrete criteria — little real positive signal to
+  grade. The graded axis took distinct levels (+0.5/+1.0) exactly where warranted; the
+  distribution is dominated by legitimate 0.0s. **The real gradation test is the molecular
+  "met" tail (low-frequency topics, outside the top-4)** — the natural next pilot.
+- **Status:** prompts validated as *not* literal-latching; before any corpus-wide or paid
+  (Nemotron) all-criteria run, pilot the molecular tail to confirm rich gradation materialises.
