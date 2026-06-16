@@ -67,8 +67,11 @@ sleep 2
 #   * --parallel 2  (was 1): continuous batching for the concurrent driver.
 #   * --ctx-size 32768  (was 16384): 16384 tokens per slot (two chunks) for
 #     chunk + scaffold + reasoning output. Must be a multiple of --parallel.
-#   * --predict 2048  (prod has none): bound per-call output so a runaway reasoning
-#     generation cannot exhaust a slot's context.
+#   * --predict 4096  (prod has none): bound per-call output so a runaway reasoning
+#     generation cannot exhaust a slot's context. Raised 2048 -> 4096 because at 2048
+#     Gemma's reasoning preamble (thinking shares this budget) truncated the JSON on
+#     dense chunks -> ~163 unparseable cells in the domain-general re-pilot. 4096 out
+#     + ~9k chunk + ~2k scaffold ~= 15k < 16384 per-slot, still fits.
 # Everything else mirrors production (alias, sampler, quantized KV, jinja, deepseek
 # reasoning split) so criteria_judge.py / judge_pilot.py talk to it unchanged.
 exec "${LLAMA_DIR}/build/bin/llama-server" \
@@ -88,7 +91,7 @@ exec "${LLAMA_DIR}/build/bin/llama-server" \
     --top-p 0.95 \
     --top-k 20 \
     --min-p 0.0 \
-    --predict 2048 \
+    --predict 4096 \
     --no-mmap \
     --threads 8 \
     > "${LOG}" 2>&1

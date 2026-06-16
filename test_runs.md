@@ -135,13 +135,49 @@ spread: two_worlds flat 0.0 (std 0); adaptors std 0.12; arbitrariness std 0.11. 
 
 ---
 
-## Run 5 — domain-general criteria re-pilot (2026-06-16, IN PROGRESS)
+## Run 5 — domain-general criteria re-pilot (2026-06-16)
 
-Re-pilot on the **same top-4 neuro topics** with the domain-general `CRITERIA_DEFS`
-(CLAUDE.md §9.1); fresh checkpoint `pilot_verdicts_domaingen.jsonl`, baseline preserved in
-`pilot_verdicts_molecular.jsonl`. **Pass criteria:** two_worlds gains grounded positives in
-neural/audio papers (was 0); adaptors finds mediator-based positives beyond the histonic
-topic; every positive still quote-grounded.
+Re-pilot on the **same top-4 neuro topics** `[11, 18, 19, 13]` (102 papers, 1341 chunk cells)
+with the domain-general `CRITERIA_DEFS` (CLAUDE.md §9.1); checkpoint
+`pilot_verdicts_domaingen.jsonl`, molecular baseline preserved in `pilot_verdicts_molecular.jsonl`.
+Persisted run-agnostically to `chunk_verdicts` + `verdicts` (overwriting the molecular pilot rows
+for these 102 papers; the molecular baseline survives in the JSONL copy), and this run carried the
+real `prompt_hash` / `prompt_registry` schema migration (CLAUDE.md §3) — `mysqldump` taken first
+per §7.
 
-_Results pending — fill in on completion (categorical old→new per criterion, grounded-positive
-counts, spot-check that each positive's quote is verbatim in its chunk)._
+**Operational note — `--predict` truncation + recovery.** The first pass left ~40 chunk cells
+unparsed: the pilot server ran `--predict 2048`, and Gemma's reasoning preamble *shares* that
+budget (thinking is on → `reasoning_content` decoded before the JSON), so on dense chunks the JSON
+was cut off mid-object → unparseable, isolated per cell (logged + skipped, never checkpointed).
+Fix: raise `start_llama_pilot.sh` to `--predict 4096` (still fits 16384/slot: ~9k chunk + ~2k
+scaffold + 4096 out). A recovery re-run (resume keyed on the `(pdf_path, chunk_idx, criterion)`
+triple) re-judged exactly those cells — **0 skips, 0 reconnects, VRAM steady 23.97/24.6 GB, no
+OOM**. The post-pilot persist also now survives an idle-connection drop via `db.run_with_reconnect`
+(the `wait_timeout` 2013 fix; this run needed 0 retries).
+
+Categorical (molecular → domain-general); `unclear` is 0 in both throughout:
+
+| criterion | MOL met / not_met | DOMAIN-GEN met / not_met | positive chunk cells (mol→dg) |
+|---|---|---|---|
+| two_worlds    | 0 / 102 | **8** / 94  | 0 → 16 |
+| adaptors      | 3 / 99  | **41** / 61 | 5 → 68 |
+| arbitrariness | 2 / 100 | **3** / 99  | 2 → 4  |
+
+**Read — both pass criteria met, grounding intact.**
+- **two_worlds 0 → 8 met.** The molecular-bias rejection ("not *molecular* worlds") is gone; the
+  judge now recognises domain two-world mappings (stimulus↔spikes, sound↔percept) in neural/audio
+  papers — exactly the stratum it mechanically zeroed in Run 4. Pass criterion met.
+- **adaptors 3 → 41 met.** The mediator generalization (Major 2025; CLAUDE.md §9.1) surfaces
+  nervous-system / neural-circuit / receptor mediators across the neuro topics, far beyond Run 4's
+  histonic-only 3. Pass criterion met. (This is the largest swing — watch for over-broadening on
+  the molecular tail / corpus-wide; the grounding gate is the guardrail.)
+- **arbitrariness 2 → 3 met.** Already domain-general in Run 4, so a small change as expected — it
+  was the template, not the target.
+- **Grounding held perfectly.** All **88** positive chunk cells (agreement ≥ +0.5) carry a
+  non-empty `evidence_quote`; **0** are flagged `grounding_failed` and **0** have an empty quote —
+  every positive is verbatim-grounded by construction (the gate writes post-gate records). A
+  3-cell independent re-check (re-tokenise → `chunk_text.reproduce_chunks` → substring) confirmed
+  the quote is verbatim in its chunk in 3/3 (two_worlds, adaptors, arbitrariness).
+
+**Next (backlog):** confirm gradation on the molecular "met" tail *outside* the neuro top-4 before
+any corpus-wide or paid (DeepSeek V4 Pro) all-criteria run.
