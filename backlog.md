@@ -1,18 +1,33 @@
 # Backlog
 
 ## Next runs (planned)
-
-1. **More Gemma 4 smoke runs.** A few additional smoke/pilot passes on the local
+1. **Re-run the topic-subtraction A/B once Run 6 persists** (within-topic centring,
+   idea #1 below). Read-only spike `/var/tmp/topic_subtract_spike.py` is written and
+   tested: it builds the production geometry (μ, axes, strength=0.5, k=0), then per
+   chunk subtracts that chunk's dominant-topic centroid direction (centred, unit) with
+   strength λ ∈ {0, .25, .5, .75, 1.0} and Spearman-correlates `e` vs the continuous
+   `verdicts.graded`. **First run (2026-06-16, 102 neuro top-4 graded papers) was
+   inconclusive by design — range-restricted** (concrete criteria nearly all `not_met`
+   on the neuro stratum): adaptors flat (ρ ≈ −0.06, no λ effect), two_worlds flat
+   (≈ −0.03), arbitrariness the only mover (+0.140 → +0.198 monotonic to λ=1.0) but
+   resting on **~2 positives among 102** → too fragile to trust (cf. [[dont-overfit-synthetic-verdicts]]).
+   The clean test needs variance on two_worlds/adaptors, i.e. the 117 met-tail "rest"
+   papers Run 6 is judging. **Decision rule:** if λ lifts adaptors/two_worlds there →
+   implement in `embed_score.py` behind a flag (e.g. `--topic-strength`), TDD, gated on
+   `--run` so baseline is untouched; if it again only nudges arbitrariness → drop it.
+   Judge ρ, not `within` (the latter improves cosmetically without improving ranks).
+2. **More Gemma 4 smoke runs.** A few additional smoke/pilot passes on the local
    free Gemma-4-31B judge (graded per-chunk, domain-general criteria — CLAUDE.md §9)
    to confirm gradation materialises beyond the neuro top-4 before committing paid
    spend. Free/offline GPU; checkpoint per-chunk JSONL (never deleted).
-2. **Full three-criteria run on DeepSeek V4 Pro.** Once the prompts are validated,
+3. **Full three-criteria run on DeepSeek V4 Pro.** Once the prompts are validated,
    send **all three** criteria for **all papers** to paid **DeepSeek V4 Pro** via
    OpenRouter (CLAUDE.md §6; input $0.435/1M, output $0.87/1M — total cost TBD).
    Spend-safety: checkpoint to `sample_verdicts.jsonl` per paper (resumable APPEND)
    **before** MySQL persistence; never delete the checkpoint. Note: the code
    constant `criteria_judge.OPENROUTER_MODEL` still points at Nemotron — flip it
    (TDD: update `test_criteria_judge.py` first) before this run.
+
 
 ## Ideas / notes
 
