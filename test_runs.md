@@ -181,3 +181,29 @@ Categorical (molecular → domain-general); `unclear` is 0 in both throughout:
 
 **Next (backlog):** confirm gradation on the molecular "met" tail *outside* the neuro top-4 before
 any corpus-wide or paid (DeepSeek V4 Pro) all-criteria run.
+
+---
+
+## Run 6 — molecular "met"-tail pilot, rest of corpus (2026-06-16, IN PROGRESS)
+
+Acting on the Run 5 backlog: the graded domain-general judge over the **117 papers OUTSIDE the
+neuro top-4** — the complement of Runs 4–5, i.e. every paper whose dominant topic is *not* in
+`[11, 18, 19, 13]`. This is the molecular "met" tail where both axes should carry real signal
+(Run 2's pooled ρ was driven by these codes), so it is the first chance to compare `e` against
+the new judge where the verdict actually varies.
+
+- **Driver:** `judge_pilot.py --rest --top 4 --tokenizer harrier_tokenizer --checkpoint
+  pilot_verdicts_rest.jsonl --workers 3` (the `--rest` selector added this session = the
+  complement of `select_pilot_papers`; tests in `tests/test_judge_pilot.py`). Free local Gemma
+  on `start_llama_pilot.sh` (`@environment_notes.md`); prod voice agent offline for the run.
+- **Selection confirmed:** 219 total / 102 neuro top-4 (Runs 4–5) / **117 rest** / 0 no-topic;
+  all 117 PDFs on disk. The end-of-run persist is restricted to these 117 `pids`, so the 102
+  neuro rows already in `verdicts`/`chunk_verdicts` are untouched.
+- **Status: launched overnight, judging in progress** (resumable per `(pdf_path, chunk_idx,
+  criterion)` triple; per-paper failure isolated — e.g. a chunk with malformed model JSON is
+  logged + skipped, never checkpointed). Results, categorical/graded distributions, and the
+  corpus-wide ρ(e, verdict) over all 219 to be filled in here once it completes and persists.
+
+**Pending on completion:** verify clean finish (`pilot_verdicts_rest.jsonl` covers 117 papers,
+the persist line landed), then re-run corpus-wide ρ(e, verdict) on all 219 and regenerate
+`ranking_report.html` so every paper carries a domain-general verdict.

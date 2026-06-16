@@ -65,8 +65,11 @@ natural selection). Not every PDF entry is a "code" in this strict sense — e.g
 
 ## 2. The data & processing pipeline (reproducible, end-to-end)
 
-Each step lists **script → input → output → tests**. Run `pytest` (249 tests, fully
-offline) after any change. MySQL on asushimu is the system of record from step 5 on.
+Each step lists **script → input → output → tests**. Run `pytest` (253 tests, fully
+offline) after any change. MySQL on asushimu is the system of record from step 5 on. The
+tests live in **`tests/`** (the per-step `tests:` lines name files there, e.g.
+`tests/test_extract.py`); an empty root `conftest.py` puts the repo root on `sys.path` so
+the in-root modules import from the subdir.
 
 1. **Extract the code list** — `extract_csv.py`
    - in: `Biological_Code_List_20260531.pdf` · out: `biological_codes.csv`
@@ -253,7 +256,8 @@ set:
 ## 7. Development, testing & reporting rules
 
 1. **TDD** — for any new or changed functionality, write a failing test first, then the
-   change. The suite is **249 tests, fully offline** (fake encoder/tokenizer, no GPU/DB needed).
+   change. The suite is **253 tests, fully offline** (fake encoder/tokenizer, no GPU/DB needed),
+   under **`tests/`** (root `conftest.py` puts the repo root on `sys.path`).
 2. **Language** — pythonic, readable; prefer numpy for data management.
 3. **Logging** — pythonic `logging`, DEBUG/INFO chosen by criticality.
 4. **Commit cadence** — pause and commit after each completed logical unit; small,
@@ -301,9 +305,11 @@ CPU-only harrier tokenizer (`harrier_tokenizer/`, `--tokenizer harrier_tokenizer
 **Pilot status.** First pilot (top-4 neuro topics, 102 papers, molecular defs) validated the
 design — the grounding gate held (every positive quote-grounded), the judge is *more* skeptical
 than the old one, and gradation moved onto `agreement`. It also exposed the molecular-bias
-prompt bug fixed in §9.1. Pilot results: `@test_runs.md` Runs 4–5. Before any corpus-wide or
-paid (DeepSeek V4 Pro) all-criteria run, confirm rich gradation materialises on the molecular "met"
-tail (the natural next pilot, outside the neuro top-4).
+prompt bug fixed in §9.1. Pilot results: `@test_runs.md` Runs 4–5. The molecular "met"-tail
+pilot that backlog called for — the 117 papers *outside* the neuro top-4 (`judge_pilot.py
+--rest --top 4`, free local Gemma) — is **running** (checkpoint `pilot_verdicts_rest.jsonl`);
+results land in `@test_runs.md` Run 6. Before any corpus-wide or paid (DeepSeek V4 Pro)
+all-criteria run, confirm rich gradation materialises on that tail.
 
 ### 9.1 Domain-general criteria (2026-06-16) — molecular-bias fix
 The molecular-specific `CRITERIA_DEFS` mechanically rejected every non-molecular paper
