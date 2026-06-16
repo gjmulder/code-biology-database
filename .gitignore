@@ -231,3 +231,14 @@ Code_Biology_PDFs/
 embed_in.json
 embed_out.json
 centroids_out.json
+
+# Downloaded HF tokenizer (CPU-only, no model weights; regenerable via
+# AutoTokenizer.from_pretrained — see environment_notes.md)
+harrier_tokenizer/
+
+# Verdict checkpoints / spend-safety records (data, not source; MySQL is the
+# system of record — CLAUDE.md §7 rule 5: kept on disk, never deleted, not committed)
+*.jsonl
+
+# Pre-redesign verdict baseline snapshots (inputs to compare_verdicts.py)
+old_*.json
