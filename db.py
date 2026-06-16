@@ -50,6 +50,9 @@ DDL = [
         graded      DOUBLE,                  -- graded_max (graded judge axis); NULL for the
                                              -- old categorical path
         model       VARCHAR(128),
+        prompt_hash VARCHAR(64),             -- prompt version (criteria_judge.prompt_hash);
+                                             -- FK into prompt_registry, distinguishes e.g. the
+                                             -- molecular vs domain-general criterion prompts
         run_ts      DATETIME,
         PRIMARY KEY (code_number, pdf_path, criterion)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -68,8 +71,21 @@ DDL = [
         confidence     DOUBLE,
         evidence_quote TEXT,
         model          VARCHAR(128),
+        prompt_hash    VARCHAR(64),          -- prompt version (criteria_judge.prompt_hash)
         run_ts         DATETIME,
         PRIMARY KEY (code_number, pdf_path, criterion, chunk_idx)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
+    # Self-describing registry of judge prompt versions: the full canonical template text of
+    # each prompt version, stored once and keyed by its hash, so the DB alone (not just the
+    # git commit) recovers the exact prompt a verdict was produced under.
+    """
+    CREATE TABLE IF NOT EXISTS prompt_registry (
+        prompt_hash VARCHAR(64)  NOT NULL,
+        criterion   VARCHAR(32),
+        prompt_text MEDIUMTEXT,
+        run_ts      DATETIME,
+        PRIMARY KEY (prompt_hash)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
     """
@@ -262,6 +278,13 @@ def migrate_runs(conn):
         # present; fresh DBs get it from the DDL above). chunk_verdicts is created by DDL.
         if not _has_column(c, "verdicts", "graded"):
             c.execute("ALTER TABLE verdicts ADD COLUMN graded DOUBLE AFTER confidence")
+        # Prompt provenance: add `prompt_hash` to a pre-provenance DB (guarded no-op once
+        # present; fresh DBs get it + prompt_registry from the DDL above).
+        if not _has_column(c, "verdicts", "prompt_hash"):
+            c.execute("ALTER TABLE verdicts ADD COLUMN prompt_hash VARCHAR(64) AFTER model")
+        if not _has_column(c, "chunk_verdicts", "prompt_hash"):
+            c.execute("ALTER TABLE chunk_verdicts "
+                      "ADD COLUMN prompt_hash VARCHAR(64) AFTER model")
     conn.commit()
 
 
@@ -393,7 +416,7 @@ def verdict_update_rows(records, run_ts=None, model=None):
             if not verdict:
                 continue
             rows.append((code, pid, crit, verdict, v.get("confidence"),
-                         v.get("graded"), model, run_ts))
+                         v.get("graded"), model, v.get("prompt_hash"), run_ts))
     return rows
 
 
@@ -406,8 +429,17 @@ def chunk_verdict_rows(records, run_ts=None, model=None):
     confidence, evidence_quote, model, run_ts)``. ``model`` is the judge model."""
     return [(int(r["code_number"]), r["pdf_path"], r["criterion"], int(r["chunk_idx"]),
              r.get("agreement"), r.get("confidence"), r.get("evidence_quote", ""),
-             model, run_ts)
+             model, r.get("prompt_hash"), run_ts)
             for r in records]
+
+
+def prompt_registry_rows(entries, run_ts=None):
+    """Prompt-version entries → tuples for ``prompt_registry``.
+
+    Each entry is ``{prompt_hash, criterion, prompt_text}`` → tuple
+    ``(prompt_hash, criterion, prompt_text, run_ts)`` (the full template stored once per hash)."""
+    return [(e["prompt_hash"], e.get("criterion"), e.get("prompt_text"), run_ts)
+            for e in entries]
 
 
 def update_verdicts(conn, records):
@@ -423,10 +455,12 @@ def update_verdicts(conn, records):
     with conn.cursor() as c:
         c.executemany(
             "INSERT INTO verdicts "
-            "(code_number,pdf_path,criterion,verdict,confidence,graded,model,run_ts) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) AS new "
+            "(code_number,pdf_path,criterion,verdict,confidence,graded,model,prompt_hash,"
+            "run_ts) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) AS new "
             "ON DUPLICATE KEY UPDATE verdict=new.verdict, confidence=new.confidence, "
-            "graded=new.graded, model=new.model, run_ts=new.run_ts",
+            "graded=new.graded, model=new.model, prompt_hash=new.prompt_hash, "
+            "run_ts=new.run_ts",
             rows)
     conn.commit()
     return len(rows)
@@ -444,10 +478,31 @@ def store_chunk_verdicts(conn, records, model=None):
         c.executemany(
             "INSERT INTO chunk_verdicts "
             "(code_number,pdf_path,criterion,chunk_idx,agreement,confidence,"
-            "evidence_quote,model,run_ts) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) AS new "
+            "evidence_quote,model,prompt_hash,run_ts) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) AS new "
             "ON DUPLICATE KEY UPDATE agreement=new.agreement, confidence=new.confidence, "
-            "evidence_quote=new.evidence_quote, model=new.model, run_ts=new.run_ts",
+            "evidence_quote=new.evidence_quote, model=new.model, "
+            "prompt_hash=new.prompt_hash, run_ts=new.run_ts",
+            rows)
+    conn.commit()
+    return len(rows)
+
+
+def register_prompts(conn, entries):
+    """Upsert prompt-version templates into ``prompt_registry`` (one row per hash).
+
+    ``entries`` is a list of ``{prompt_hash, criterion, prompt_text}``. Idempotent: re-running
+    refreshes the stored text for an existing hash. Returns the number of versions written."""
+    import datetime
+    init_schema(conn)
+    run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    rows = prompt_registry_rows(entries, run_ts=run_ts)
+    with conn.cursor() as c:
+        c.executemany(
+            "INSERT INTO prompt_registry (prompt_hash,criterion,prompt_text,run_ts) "
+            "VALUES (%s,%s,%s,%s) AS new "
+            "ON DUPLICATE KEY UPDATE criterion=new.criterion, "
+            "prompt_text=new.prompt_text, run_ts=new.run_ts",
             rows)
     conn.commit()
     return len(rows)

@@ -122,6 +122,46 @@ def test_chunk_prompt_anchors_labelled_illustrative():
     assert "ILLUSTRATIVE" in p
 
 
+# --- prompt provenance (hash persisted alongside each verdict) -------------
+
+def test_prompt_hash_is_stable_and_per_criterion():
+    """The prompt version is a deterministic 64-hex sha256 and differs per criterion (the
+    molecular->domain-general rewrite changed two_worlds/adaptors but not arbitrariness, so
+    per-criterion provenance is meaningful)."""
+    h = cj.prompt_hash("two_worlds")
+    assert len(h) == 64 and all(ch in "0123456789abcdef" for ch in h)
+    assert cj.prompt_hash("two_worlds") == h  # deterministic
+    assert cj.prompt_hash("two_worlds") != cj.prompt_hash("adaptors")
+
+
+def test_prompt_template_is_version_bearing_but_input_free():
+    """prompt_template carries the version-bearing scaffold + criterion definition (so an
+    edit to either changes the hash) but excludes per-chunk inputs (passage/topic/control
+    text), so the hash identifies the prompt version, not the input."""
+    t = cj.prompt_template("two_worlds")
+    assert cj.CRITERIA_DEFS["two_worlds"] in t
+    assert cj.CALIBRATION_PREAMBLE in t
+    assert cj.STEELMAN_ARBITRARINESS in cj.prompt_template("arbitrariness")
+    assert cj.STEELMAN_ARBITRARINESS not in t
+    assert "=== PASSAGE ===" not in t  # the chunk passage is an input, not the version
+
+
+def test_prompt_hash_changes_with_criterion_definition(monkeypatch):
+    """Editing a criterion's definition changes its prompt hash (provenance sensitivity)."""
+    before = cj.prompt_hash("two_worlds")
+    monkeypatch.setitem(cj.CRITERIA_DEFS, "two_worlds", "a wholly different definition")
+    assert cj.prompt_hash("two_worlds") != before
+
+
+def test_build_chunk_prompt_still_matches_template_scaffold():
+    """The live prompt and the version template must share the same scaffold (anchor framing,
+    schema, criterion def) so the hash can't silently drift from what is actually sent."""
+    p = _build("two_worlds")
+    assert cj.ANCHOR_AGREE_FRAMING in p
+    assert cj.ANCHOR_DISAGREE_FRAMING in p
+    assert cj.ANCHOR_AGREE_FRAMING in cj.prompt_template("two_worlds")
+
+
 # --- graded parsing + grounding -------------------------------------------
 
 def _graded(agreement, quote="", confidence="High"):

@@ -126,6 +126,7 @@ def chunk_record(paper_meta, chunk_idx, criterion, parsed):
         "confidence": parsed["confidence"],
         "evidence_quote": parsed.get("evidence_quote", ""),
         "reasoning": parsed.get("reasoning", ""),
+        "prompt_hash": cj.prompt_hash(criterion),
     }
 
 
@@ -146,7 +147,8 @@ def aggregate_to_verdict_records(chunk_records):
         for crit, recs in crits.items():
             gmax, gmean, conf, categorical = cj.aggregate_graded(recs)
             criteria[crit] = {"verdict": categorical, "confidence": conf,
-                              "graded": gmax, "graded_mean": gmean}
+                              "graded": gmax, "graded_mean": gmean,
+                              "prompt_hash": cj.prompt_hash(crit)}
         out.append({"code_number": code, "pdf_path": pid, "criteria": criteria})
     return out
 
@@ -252,6 +254,15 @@ def main():
         # Persist from the *full* checkpoint (resilient to resumed runs), not just this
         # invocation's records, so aggregation always sees every judged chunk.
         ckpt_records = _read_checkpoint(args.checkpoint, set(pids))
+        # Stamp prompt provenance: records from an older checkpoint predate the prompt_hash
+        # field, so back-fill it from the live prompt version (correct because persistence
+        # runs under the same code that produced these verdicts), and register the templates.
+        for r in ckpt_records:
+            r.setdefault("prompt_hash", cj.prompt_hash(r["criterion"]))
+        crits = sorted({r["criterion"] for r in ckpt_records})
+        db.register_prompts(conn, [
+            {"prompt_hash": cj.prompt_hash(c), "criterion": c,
+             "prompt_text": cj.prompt_template(c)} for c in crits])
         n_chunks = db.store_chunk_verdicts(conn, ckpt_records, model=cj.LOCAL_MODEL)
         verdict_records = aggregate_to_verdict_records(ckpt_records)
         n_verdicts = db.update_verdicts(conn, [

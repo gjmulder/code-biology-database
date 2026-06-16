@@ -226,9 +226,11 @@ def test_verdict_update_rows_one_row_per_paper_criterion():
     # No method fan-out, no run, no embedding model. The judge model isn't carried on the
     # record so `model` is None; the old categorical path carries no graded score so it is
     # None; code_number is coerced to int.
-    assert (428, "pdfs/x.pdf", "two_worlds", "met", 0.95, None, None, "t") in rows
-    assert (428, "pdfs/x.pdf", "adaptors", "not_met", 1.0, None, None, "t") in rows
-    assert (428, "pdfs/x.pdf", "arbitrariness", "unclear", 0.7, None, None, "t") in rows
+    # tuple `(code_number, pdf_path, criterion, verdict, confidence, graded, model,
+    # prompt_hash, run_ts)`; prompt_hash is None when the record carries none.
+    assert (428, "pdfs/x.pdf", "two_worlds", "met", 0.95, None, None, None, "t") in rows
+    assert (428, "pdfs/x.pdf", "adaptors", "not_met", 1.0, None, None, None, "t") in rows
+    assert (428, "pdfs/x.pdf", "arbitrariness", "unclear", 0.7, None, None, None, "t") in rows
     assert len(rows) == 3
 
 
@@ -239,7 +241,7 @@ def test_verdict_update_rows_carries_graded_when_present():
         "criteria": {"two_worlds": {"verdict": "met", "confidence": 0.66, "graded": 0.5}},
     }]
     rows = db.verdict_update_rows(records, run_ts="t")
-    assert rows == [(9, "pdfs/g.pdf", "two_worlds", "met", 0.66, 0.5, None, "t")]
+    assert rows == [(9, "pdfs/g.pdf", "two_worlds", "met", 0.66, 0.5, None, None, "t")]
 
 
 def test_verdict_update_rows_skips_criteria_without_a_verdict():
@@ -251,7 +253,7 @@ def test_verdict_update_rows_skips_criteria_without_a_verdict():
         },
     }]
     rows = db.verdict_update_rows(records, run_ts="t")
-    assert rows == [(21, "pdfs/y.pdf", "two_worlds", "met", 0.9, None, None, "t")]
+    assert rows == [(21, "pdfs/y.pdf", "two_worlds", "met", 0.9, None, None, None, "t")]
 
 
 def test_chunk_verdict_rows_grain_and_keying():
@@ -265,8 +267,8 @@ def test_chunk_verdict_rows_grain_and_keying():
          "chunk_idx": 1, "agreement": -0.5, "confidence": 0.33, "evidence_quote": ""},
     ]
     rows = db.chunk_verdict_rows(records, run_ts="t")
-    assert (5, "pdfs/a.pdf", "two_worlds", 0, 0.5, 0.66, "q0", None, "t") in rows
-    assert (5, "pdfs/a.pdf", "two_worlds", 1, -0.5, 0.33, "", None, "t") in rows
+    assert (5, "pdfs/a.pdf", "two_worlds", 0, 0.5, 0.66, "q0", None, None, "t") in rows
+    assert (5, "pdfs/a.pdf", "two_worlds", 1, -0.5, 0.33, "", None, None, "t") in rows
     assert len(rows) == 2
 
 
@@ -275,4 +277,28 @@ def test_chunk_verdict_rows_carries_model():
                 "chunk_idx": 0, "agreement": 1.0, "confidence": 1.0,
                 "evidence_quote": "x"}]
     rows = db.chunk_verdict_rows(records, run_ts="t", model="gemma-4-31b")
-    assert rows[0] == (1, "p", "adaptors", 0, 1.0, 1.0, "x", "gemma-4-31b", "t")
+    assert rows[0] == (1, "p", "adaptors", 0, 1.0, 1.0, "x", "gemma-4-31b", None, "t")
+
+
+def test_verdict_update_rows_carries_prompt_hash():
+    # the graded path stamps the criterion's prompt-version hash onto each verdict
+    records = [{"code_number": "9", "pdf_path": "p", "criteria": {
+        "two_worlds": {"verdict": "met", "confidence": 1.0, "graded": 0.5,
+                       "prompt_hash": "abc123"}}}]
+    rows = db.verdict_update_rows(records, run_ts="t")
+    assert rows == [(9, "p", "two_worlds", "met", 1.0, 0.5, None, "abc123", "t")]
+
+
+def test_chunk_verdict_rows_carries_prompt_hash():
+    records = [{"code_number": "1", "pdf_path": "p", "criterion": "adaptors",
+                "chunk_idx": 0, "agreement": 1.0, "confidence": 1.0,
+                "evidence_quote": "x", "prompt_hash": "deadbeef"}]
+    rows = db.chunk_verdict_rows(records, run_ts="t", model="m")
+    assert rows[0] == (1, "p", "adaptors", 0, 1.0, 1.0, "x", "m", "deadbeef", "t")
+
+
+def test_prompt_registry_rows_grain():
+    # the prompt registry stores each prompt version's full template text once, keyed by hash
+    entries = [{"prompt_hash": "h1", "criterion": "two_worlds", "prompt_text": "TEMPLATE"}]
+    rows = db.prompt_registry_rows(entries, run_ts="t")
+    assert rows == [("h1", "two_worlds", "TEMPLATE", "t")]

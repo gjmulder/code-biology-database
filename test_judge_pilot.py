@@ -91,15 +91,18 @@ def test_chunk_record_shape_matches_chunk_verdict_rows():
     parsed = {"agreement": 0.5, "confidence": 0.66,
               "evidence_quote": "q", "reasoning": "r"}
     rec = jp.chunk_record(meta, 3, "adaptors", parsed)
+    import criteria_judge as cj
     assert rec == {
         "code_number": "42", "pdf_path": "a.pdf", "chunk_idx": 3,
         "criterion": "adaptors", "agreement": 0.5, "confidence": 0.66,
         "evidence_quote": "q", "reasoning": "r",
+        "prompt_hash": cj.prompt_hash("adaptors"),
     }
-    # db.chunk_verdict_rows must consume it without KeyError
+    # db.chunk_verdict_rows must consume it without KeyError, carrying the prompt version
     import db
     rows = db.chunk_verdict_rows([rec], run_ts="t", model="gemma-4-31b")
-    assert rows == [(42, "a.pdf", "adaptors", 3, 0.5, 0.66, "q", "gemma-4-31b", "t")]
+    assert rows == [(42, "a.pdf", "adaptors", 3, 0.5, 0.66, "q", "gemma-4-31b",
+                     cj.prompt_hash("adaptors"), "t")]
 
 
 # --- roll-up to verdict records -------------------------------------------
@@ -126,8 +129,9 @@ def test_aggregate_to_verdict_records_uses_graded_max_and_derived_categorical():
     assert rec["criteria"]["adaptors"]["verdict"] == "not_met"
     assert rec["criteria"]["adaptors"]["graded"] == -0.5
 
-    # feeds db.verdict_update_rows cleanly (graded carried through)
-    import db
+    # feeds db.verdict_update_rows cleanly (graded + prompt version carried through)
+    import db, criteria_judge as cj
     rows = db.verdict_update_rows(records, run_ts="t", model="gemma-4-31b")
     tw_row = [r for r in rows if r[2] == "two_worlds"][0]
-    assert tw_row == (1, "a.pdf", "two_worlds", "met", 1.0, 1.0, "gemma-4-31b", "t")
+    assert tw_row == (1, "a.pdf", "two_worlds", "met", 1.0, 1.0, "gemma-4-31b",
+                      cj.prompt_hash("two_worlds"), "t")

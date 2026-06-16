@@ -26,6 +26,7 @@ This module's pure logic (join, JSON parsing, grounding, aggregation,
 resumability) is unit-tested offline with the models injected as callables.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -316,6 +317,40 @@ GRADED_AGREEMENT_LEVELS = (
     "strongly_disagree", "disagree", "neutral", "agree", "strongly_agree",
 )
 
+# Version-bearing prompt scaffold, factored out so both the live prompt
+# (:func:`build_chunk_prompt`) and the provenance template (:func:`prompt_template`) share
+# the exact same text — the hash then cannot silently drift from what is actually sent.
+ANCHOR_AGREE_FRAMING = (
+    "AGREE anchor (ILLUSTRATIVE — the genetic code is the molecular exemplar of the "
+    "abstract relation; your passage's domain will differ, so match the relation, not "
+    "the molecules):"
+)
+ANCHOR_DISAGREE_FRAMING = (
+    "DISAGREE anchor (ILLUSTRATIVE — a physically-determined process, here molecular; "
+    "the principle is domain-general):"
+)
+QUESTION_LINE = (
+    "Does the passage ARGUE that this criterion is met? Answer on the graded scale."
+)
+
+
+def _graded_schema():
+    """The strict graded JSON shape the judge must return (shared by live prompt + template)."""
+    levels = "|".join(GRADED_AGREEMENT_LEVELS)
+    return (
+        '{"agreement": "%s", "confidence": "Low|Medium|High", '
+        '"evidence_quote": "<verbatim quote from the passage, or empty>", '
+        '"reasoning": "<1-2 sentences>"}' % levels
+    )
+
+
+def _criterion_block(criterion):
+    """The version-bearing criterion section: definition + (arbitrariness only) steelman."""
+    parts = [f'Criterion under judgement — "{criterion}": {CRITERIA_DEFS[criterion]}']
+    if criterion == "arbitrariness":
+        parts.append(STEELMAN_ARBITRARINESS)
+    return parts
+
 
 def build_chunk_prompt(chunk_text, criterion, topic_label, topic_blurb, controls):
     """Build the per-chunk, per-criterion graded prompt.
@@ -324,32 +359,41 @@ def build_chunk_prompt(chunk_text, criterion, topic_label, topic_blurb, controls
     centroid blurb, as CONTEXT only) → AGREE/DISAGREE control anchors → criterion definition
     → strict graded JSON schema → the passage. The arbitrariness steelman is injected only
     for that criterion (its two controls are precisely its two poles)."""
-    levels = "|".join(GRADED_AGREEMENT_LEVELS)
-    schema = (
-        '{"agreement": "%s", "confidence": "Low|Medium|High", '
-        '"evidence_quote": "<verbatim quote from the passage, or empty>", '
-        '"reasoning": "<1-2 sentences>"}' % levels
-    )
     parts = [
         CALIBRATION_PREAMBLE,
         f"Research area (CONTEXT ONLY): {topic_label} — {topic_blurb}",
-        "AGREE anchor (ILLUSTRATIVE — the genetic code is the molecular exemplar of the "
-        "abstract relation; your passage's domain will differ, so match the relation, not "
-        "the molecules):\n"
-        f"  {controls['genetic_code_positive']}",
-        "DISAGREE anchor (ILLUSTRATIVE — a physically-determined process, here molecular; "
-        "the principle is domain-general):\n"
-        f"  {controls['deterministic_chemistry_negative']}",
-        f'Criterion under judgement — "{criterion}": {CRITERIA_DEFS[criterion]}',
+        f"{ANCHOR_AGREE_FRAMING}\n  {controls['genetic_code_positive']}",
+        f"{ANCHOR_DISAGREE_FRAMING}\n  {controls['deterministic_chemistry_negative']}",
     ]
-    if criterion == "arbitrariness":
-        parts.append(STEELMAN_ARBITRARINESS)
-    parts.append(
-        "Does the passage ARGUE that this criterion is met? Answer on the graded scale.\n"
-        f"Return exactly this JSON shape:\n{schema}"
-    )
+    parts += _criterion_block(criterion)
+    parts.append(f"{QUESTION_LINE}\nReturn exactly this JSON shape:\n{_graded_schema()}")
     parts.append(f"=== PASSAGE ===\n{chunk_text}")
     return "\n\n".join(parts)
+
+
+def prompt_template(criterion):
+    """Canonical, version-bearing text of the graded per-chunk prompt for ``criterion``.
+
+    The invariant scaffold (system prompt, calibration preamble, anchor framing, graded JSON
+    schema, the question) plus the criterion definition and — for arbitrariness — the steelman.
+    Per-chunk inputs (the passage, topic label/blurb, control passage text) are deliberately
+    excluded so the text identifies the *prompt version*, not the input. This is exactly what
+    the molecular → domain-general rewrite changed, so its hash is the prompt-provenance key
+    persisted next to each verdict."""
+    parts = [
+        GRADED_SYSTEM_PROMPT,
+        CALIBRATION_PREAMBLE,
+        ANCHOR_AGREE_FRAMING,
+        ANCHOR_DISAGREE_FRAMING,
+    ]
+    parts += _criterion_block(criterion)
+    parts.append(f"{QUESTION_LINE}\nReturn exactly this JSON shape:\n{_graded_schema()}")
+    return "\n\n".join(parts)
+
+
+def prompt_hash(criterion):
+    """Stable sha256 hex digest of :func:`prompt_template` — the verdict's prompt version."""
+    return hashlib.sha256(prompt_template(criterion).encode("utf-8")).hexdigest()
 
 
 def judge_criteria(text, complete, keys):

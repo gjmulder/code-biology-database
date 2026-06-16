@@ -61,6 +61,10 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# MySQL backups (dump before any schema change — CLAUDE.md §7)
+codebiology_*.sql.gz
+*.sql.gz
+
 # Flask stuff:
 instance/
 .webassets-cache

@@ -167,9 +167,19 @@ adds the column + rebuilds PKs on the existing DB. Tables:
   `e`, `model` (the *embedding* model), `run_ts`. **Verdict/confidence are no longer here.**
   `--recompute` upserts `e` only.
 - **`verdicts`** — **run-agnostic** normalised table, one row per `(code_number, pdf_path,
-  criterion)` with `verdict`, `confidence`, `model` (the *judge* model), `run_ts`. The LLM
-  judge is independent of the embedding model, so verdicts are judged once and shared by
-  every run via a JOIN on `(code_number, pdf_path, criterion)`; `update_verdicts` upserts here.
+  criterion)` with `verdict`, `confidence`, `graded`, `model` (the *judge* model),
+  `prompt_hash`, `run_ts`. The LLM judge is independent of the embedding model, so verdicts are
+  judged once and shared by every run via a JOIN on `(code_number, pdf_path, criterion)`;
+  `update_verdicts` upserts here. `chunk_verdicts` (per-chunk graded diagnostics) likewise
+  carries `model` + `prompt_hash`.
+- **`prompt_registry`** (`prompt_hash` PK, `criterion`, `prompt_text`, `run_ts`) — the
+  **prompt provenance** layer (2026-06-16): `prompt_hash = criteria_judge.prompt_hash(criterion)`
+  is a sha256 over the version-bearing prompt scaffold (system prompt + calibration preamble +
+  anchor framing + criterion definition + arbitrariness steelman + schema), stamped onto every
+  verdict/chunk_verdict so the molecular vs domain-general criterion prompts (and any future
+  re-tune) are distinguishable in the DB; `register_prompts` stores each version's full template
+  text once, keyed by hash, so the DB alone recovers the exact prompt. Per-criterion, so it
+  correctly shows `arbitrariness` unchanged across the molecular→domain-general rewrite.
 - **`topic_centroids`** (`run, topic_id, label, dim, vec`) and **`chunk_topics`** (`run,
   pdf_path, chunk_idx, method, topic_id, sim`) — the scientometric topic-stratification layer
   (§2.1); both run-keyed.
@@ -278,7 +288,7 @@ set:
 ## 7. Development, testing & reporting rules
 
 1. **TDD** — for any new or changed functionality, write a failing test first, then the
-   change. The suite is **239 tests, fully offline** (fake encoder/tokenizer, no GPU/DB needed).
+   change. The suite is **249 tests, fully offline** (fake encoder/tokenizer, no GPU/DB needed).
 2. **Language** — pythonic, readable; prefer numpy for data management.
 3. **Logging** — pythonic `logging`, DEBUG/INFO chosen by criticality.
 4. **Commit cadence** — pause and commit after each completed logical unit; small,
@@ -286,6 +296,12 @@ set:
 5. **Spend safety** — paid (Nemotron) work checkpoints to `sample_verdicts.jsonl` per paper
    (resumable APPEND) **before** MySQL persistence; never delete the checkpoint.
 6. **Secrets** — `.env` is gitignored and never committed; never print API keys.
+7. **DB backup before schema changes** — always take a compressed `mysqldump` of the
+   `codebiology` DB **before** running any schema change (new table/column, `ALTER`, migration,
+   or the first `init_schema` on new DDL). e.g. `mysqldump … codebiology | gzip >
+   codebiology_$(date +%Y%m%d_%H%M%S).sql.gz` (connection detail in `@environment_notes.md`;
+   dumps are gitignored). The migrations are idempotent and guarded, but the dump is the
+   non-negotiable rollback path.
 
 ### Production llama-server — RESTORED (2026-06-14)
 The production `llama-server` (Home Assistant voice agent) was restored at project pause:
