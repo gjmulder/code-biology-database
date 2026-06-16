@@ -122,13 +122,10 @@ offline) after any change. MySQL on asushimu is the system of record from step 5
      (resumable APPEND checkpoint — the file system-of-record for spend safety) →
      upserted into the run-agnostic MySQL `verdicts` table (judged once, shared by every
      embedding run; the embedding axis is untouched, via `db.update_verdicts`).
-   - **Routing:** criteria 1 & 2 (concrete) → local **Gemma-4-31B** (free); criterion 3
-     (*arbitrariness*, subtle) → paid **Nemotron** (`nvidia/nemotron-3-ultra-550b-a55b`,
-     1M ctx, reads whole paper) via OpenRouter. `run_batch` is concurrent
-     (`DEFAULT_WORKERS=6`), resumable, per-paper failure isolation.
-   - **Cost:** criterion-3-only ≈ **$3 / ~220 papers**. A future higher-quality run sending
-     **all three** criteria to Nemotron is ≈ **$9 / run** (do this once the prompts are
-     better tuned — see §6 caveats).
+   - **Routing:** 
+     → local **Gemma-4-31B** (free);
+     → paid **DeepSeek V4 Pro** (input $0.435/1M, output $0.87/1M) via OpenRouter. `run_batch` is concurrent (`DEFAULT_WORKERS=6`), resumable, per-paper failure isolation.
+   - **Cost:** TBD for DeepSeek V4 Pro
    - tests: `test_criteria_judge.py`, `test_openrouter_agent.py`.
 
 7. **Generate the report** — `embed_independent.py --report-only`
@@ -261,7 +258,7 @@ set:
 3. **Logging** — pythonic `logging`, DEBUG/INFO chosen by criticality.
 4. **Commit cadence** — pause and commit after each completed logical unit; small,
    self-contained commits. 
-5. **Spend safety** — paid (Nemotron) work checkpoints to `sample_verdicts.jsonl` per paper
+5. **Spend safety** — paid (DeepSeek V4 Pro) work checkpoints to `sample_verdicts.jsonl` per paper
    (resumable APPEND) **before** MySQL persistence; never delete the checkpoint.
 6. **Secrets** — `.env` is gitignored and never committed; never print API keys.
 7. **DB backup before schema changes** — always take a compressed `mysqldump` of the
@@ -305,7 +302,7 @@ CPU-only harrier tokenizer (`harrier_tokenizer/`, `--tokenizer harrier_tokenizer
 design — the grounding gate held (every positive quote-grounded), the judge is *more* skeptical
 than the old one, and gradation moved onto `agreement`. It also exposed the molecular-bias
 prompt bug fixed in §9.1. Pilot results: `@test_runs.md` Runs 4–5. Before any corpus-wide or
-paid (Nemotron) all-criteria run, confirm rich gradation materialises on the molecular "met"
+paid (DeepSeek V4 Pro) all-criteria run, confirm rich gradation materialises on the molecular "met"
 tail (the natural next pilot, outside the neuro top-4).
 
 ### 9.1 Domain-general criteria (2026-06-16) — molecular-bias fix
