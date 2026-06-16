@@ -2,7 +2,14 @@
 
 High-level design, development, testing and reporting guide for the Code Biology
 project. `@environment_notes.md` holds host-specific operational detail (GPUs, MySQL
-host, llama-server, model runtimes) — keep that out of this file.
+host, llama-server, model runtimes) — keep that out of this file. `@test_runs.md` holds the
+chronological **run log** (dated results, distributions, ρ tables, shelved experiments) — keep
+those out of this file too; CLAUDE.md states the *current* design and the live decisions those
+runs produced.
+
+**Working axis:** the project focuses on **chunked embeddings** (8192-token windows) and a
+**per-chunk LLM judge**. The earlier full-paper / abstract granularities are retired (chunk
+edged them out — `@test_runs.md` Run 2); they survive in the DB/code for provenance only.
 
 ## 1. What the project is
 
@@ -58,7 +65,7 @@ natural selection). Not every PDF entry is a "code" in this strict sense — e.g
 
 ## 2. The data & processing pipeline (reproducible, end-to-end)
 
-Each step lists **script → input → output → tests**. Run `pytest` (202 tests, fully
+Each step lists **script → input → output → tests**. Run `pytest` (249 tests, fully
 offline) after any change. MySQL on asushimu is the system of record from step 5 on.
 
 1. **Extract the code list** — `extract_csv.py`
@@ -90,12 +97,12 @@ offline) after any change. MySQL on asushimu is the system of record from step 5
 4. **Embed the papers (GPU, once per structural run)** — `run_harrier_embed.py`
    - host: asushimu 3090 Ti · in: paper texts + prototype passages · out: transient
      `embed_out.json` (transport only).
-   - Emits **raw vectors only** — document vectors (three methods, below) and pooled pole
-     vectors (3 criteria × pos/neg). It does **not** compute `e`. Model
-     `microsoft/harrier-oss-v1-27b` (5376-dim); runtime detail in `@environment_notes.md`.
-   - **Three chunking methods**, each embedded as a separate document so we can test which
-     granularity tracks the verdict: **full** (whole capped paper), **abstract** (abstract
-     only), **chunk** (8192-token windows, 50% overlap, scored per-window then **max-pooled**).
+   - Emits **raw vectors only** — document vectors and pooled pole vectors (3 criteria ×
+     pos/neg). It does **not** compute `e`. Model `microsoft/harrier-oss-v1-27b` (5376-dim);
+     runtime detail in `@environment_notes.md`.
+   - **Working granularity is `chunk`** — 8192-token windows, 50% overlap, scored per-window
+     then **max-pooled**. (The retired `full`/`abstract` methods are still emitted for
+     provenance; `@test_runs.md` Run 2 has the comparison that retired them.)
    - tests: `test_run_harrier_embed.py`.
 
 5. **Persist vectors + score `e` offline (driver)** — `embed_independent.py` (+ `db.py`,
@@ -188,7 +195,7 @@ adds the column + rebuilds PKs on the existing DB. Tables:
 
 ## 4. The four space-level levers — offline scoring (`embed_score.py`)
 
-Run 1's double-cosine `e = cos(paper, POS) − cos(paper, NEG)` under-discriminated: a
+The original double-cosine `e = cos(paper, POS) − cos(paper, NEG)` under-discriminated: a
 topicality halo and the decoder-only-embedder anisotropy meant in-register text all sat in
 a narrow cone. The fix is **space-level, not prompt-level**:
 
@@ -212,60 +219,24 @@ e_c(d) = a_c⊥ · normalize( whiten(d − μ, B) )               # chunk window
   **revisited at corpus scale (2026-06-14, `sweep_levers.py`) and the defaults stand** —
   see the sweep note below.
 
-**Corpus-scale lever sweep (`sweep_levers.py`, free/offline, n=219).** The `(whiten-k,
-shared-strength)` grid `k∈{0,1,2,4,8,16} × strength∈{0,.25,.5,.75,1}` was rescored from the
-persisted vectors and ρ(e, verdict) tabulated per method × criterion (no GPU/spend/DB-write;
-the `(0, 0.5)` cell reproduces §5 exactly, proving same path as live `--recompute`). Findings:
-(1) **whitening is a dead end at corpus scale, not just at n=20** — `k≥1` collapses the two
-concrete criteria (k=2 drops two_worlds +0.41→+0.05); only the 2-positive `arbitrariness`
-mildly prefers high k, which is noise. (2) `strength=0.5` is near-optimal for two_worlds;
-only `adaptors` wanted lower (s=0 → +0.343 vs +0.310), inside the overfit margin. (3) No single
-cell wins all three, and **per-criterion argmax selection was rejected as overfitting** 217
-*synthetic, unreliable* labels (esp. arbitrariness's 2 positives). **Decision: keep
-`k=0, strength=0.5`.** The binding constraint is the model + pole separation (`within` still
-0.51–0.68), not the levers. `sweep_levers.py` is kept as the re-runnable diagnostic for a
-future model's vectors. (The model-swap that this licensed was built then shelved — see §8.)
+**Live decision: keep `k=0, strength=0.5`.** A corpus-scale `(whiten-k, shared-strength)`
+sweep (`sweep_levers.py`, free/offline, n=219) found whitening a dead end (`k≥1` collapses the
+concrete criteria), `strength=0.5` near-optimal, and no cell winning all three — per-criterion
+argmax was rejected as overfitting synthetic labels. The binding constraint is the model + pole
+separation (`within` 0.51–0.68), not the levers. Full sweep table and reasoning: `@test_runs.md`
+Run 1. `sweep_levers.py` is kept as the re-runnable diagnostic for a future model's vectors.
 
-## 5. First useful result (2026-06-14) — ρ is now measurable
+## 5. Current result — ρ is measurable, ranks trustworthy
 
-The embedding corpus is **219 papers** (after dropping the in-corpus self-reference).
-Previously only the 10-paper seed carried verdicts, so ρ was driven by one `met` paper and
-`arbitrariness` had **zero positives → undefined**. Backfilling LLM verdicts for the whole
-corpus (`judge_corpus.py`; **217 / 219** judged, 2 failed PDF extraction, ignored) gives
-real variation in every criterion, so **ρ(e, verdict_ordinal) is measurable for the first
-time** — the prior "honest gap."
-
-Verdict distribution (217 labelled):
-
-| criterion | met | unclear | not_met |
-|---|---|---|---|
-| two_worlds    | 17 | 9  | 191 |
-| adaptors      | 12 | 12 | 193 |
-| arbitrariness | 2  | 17 | 198 |
-
-Spearman ρ(e, verdict_ordinal):
-
-| criterion | full | abstract | chunk |
-|---|---|---|---|
-| two_worlds    | +0.397 | +0.389 | +0.409 |
-| adaptors      | +0.265 | +0.293 | +0.310 |
-| arbitrariness | +0.123 | +0.081 | +0.149 |
-
-**Read:** the embedding axis tracks the verdict direction positively on all three
-criteria — strongest on `two_worlds` (most concrete), weakest on `arbitrariness` (subtlest,
-still only 2 positives → directional, not precise). `chunk` edges out `full`/`abstract`
-everywhere. Pole widths still overlap (`within`: `arbitrariness` best-separated), so
-**ranks are trustworthy, absolute magnitudes less so**.
-
-### Per-topic ρ (2026-06-15) — stratified by nearest scientometric topic
-Stratifying ρ by dominant topic (§2.1; `assign_topics.py` → `report.md`) holds the topicality
-halo fixed, so a positive within-topic ρ is stronger evidence than the pooled ρ above. The
-largest strata are the neuro/metaphorical topics (Cognitive Signal n=39, Histonic Code 26,
-Neural Circuits 21), where the concrete criteria are flat `not_met` (ρ frequently `n/a` — no
-verdict variation in-stratum); only `arbitrariness` varies there (e.g. Regulatory Code +0.52,
-Cognitive Signal +0.36). The molecular "met" codes sit in the **low-frequency tail**.
-**Diagnostic only** — strata are small (≥10 shown) and the verdicts synthetic (§6): read
-direction, not magnitude.
+The embedding corpus is **219 papers** (after dropping the in-corpus self-reference); LLM
+verdicts are backfilled across it (`judge_corpus.py`, 217/219 judged). On the working `chunk`
+axis the embedding score tracks the verdict direction positively on all three criteria —
+strongest on `two_worlds` (most concrete, ρ≈+0.41), weakest on `arbitrariness` (subtlest, only
+2 positives → directional not precise, ρ≈+0.15). Pole widths overlap (`within` 0.51–0.68), so
+**ranks are trustworthy, absolute magnitudes less so**. Per-topic ρ (stratified by §2.1) holds
+the halo fixed but the concrete criteria are flat `not_met` in the large neuro strata, so it is
+**diagnostic only**. Full distributions, ρ tables (incl. the retired full/abstract columns),
+and per-topic breakdown: `@test_runs.md` Run 2.
 
 ## 6. ⚠️ Major caveats (the verdicts are not ground truth)
 
@@ -310,27 +281,18 @@ on :11434, active). The 3090 Ti is back on prod duty — **any future GPU/judgin
 must first free it again** (`sudo systemctl stop llama-server`, do not leave prod down).
 (Operational detail in `@environment_notes.md`.)
 
-## 8. Model swap shelved — likely at the measurement ceiling (2026-06-14)
+## 8. Embedding side is at its ceiling — the constraint is label quality
 
-The run-keyed schema (§3) was built to host a head-to-head against a second embedding model,
-**gte-Qwen2-7B-instruct** (Q8_0 GGUF via a transient llama-server). The runner
-(`run_gte_embed.py`, `start_llama_embed.sh`, driver `--engine llamacpp`) is **complete and
-tested but the GPU pass was not run** — shelved deliberately:
-- `within` (+0.68/+0.63/+0.52) indicts **pole geometry**, and gte is the *same* decoder-only
-  last-token architecture as harrier — the documented source of the anisotropy/topicality
-  halo (§4) — so the swap is unlikely to widen the poles. Kept as a tested artifact; the
-  `run` column means a future pass is non-destructive if ever wanted.
-- The remaining label-free lever is **prototype/pole quality** (sharper contrastive pos/neg
-  passages, esp. arbitrariness). Iterable cheaply: edit `prototypes.json` → re-embed only the
-  poles → offline recompute `within`/`e`. **Expected gain is small** — the prototypes are
-  already corpus-mined and the pos/neg passages are topically collinear by construction.
-- **Honest read:** the levers are exhausted, the model swap is judged unpromising, and
-  prototype edits are expected to move things only marginally. The genuine constraint is now
-  **label quality, not the embedding** — the verdicts are unreliable (§6) and arbitrariness
-  has only 2 positives, so ρ can't even adjudicate fine gains. The next real step is a
-  re-tuned judge + a gold-set validation, not more embedding-side tuning.
+Embedding-side tuning is judged exhausted: the levers are set (§4), and an **embedding-model
+swap to gte-Qwen2-7B-instruct was built, tested, and deliberately shelved** — gte is the *same*
+decoder-only last-token architecture as harrier (the documented source of the anisotropy that
+overlaps the poles), so it is unlikely to widen them; the runner is kept as a non-destructive
+tested artifact (`run` column). The only remaining label-free lever is prototype/pole quality,
+expected to move things marginally. **The genuine constraint is now label quality, not the
+embedding** (§6) — the next real step is the re-tuned judge (§9) + a gold-set validation, not
+more embedding-side work. Full shelving rationale: `@test_runs.md` Run 3.
 
-## 9. Judge redesign pilot — graded, per-chunk, topic-grounded, control-anchored (2026-06-16)
+## 9. Judge redesign — graded, per-chunk, topic-grounded, control-anchored (2026-06-16)
 
 Acting on §6/§8 ("the constraint is label quality"), the LLM judge was rebuilt as a **graded**
 (−1…+1 `agreement`), **per-chunk** (the *exact* 8192-token harrier embedding windows reproduced
@@ -340,48 +302,33 @@ via `chunk_text.reproduce_chunks` → tokenizer-aligned to `doc_vectors`), **top
 A grounding gate pulls any positive whose `evidence_quote` is not verbatim in the chunk back to
 `0.0`; `aggregate_graded` max-pools chunks → `(graded_max, graded_mean, confidence, categorical)`
 with `graded_max ≥ +0.5 → met`, `≤ 0.0 → not_met`, else `unclear`. Schema:
-`verdicts.graded DOUBLE` + new run-agnostic `chunk_verdicts` table (per-chunk diagnostics).
+`verdicts.graded DOUBLE` + run-agnostic `chunk_verdicts` table (per-chunk diagnostics).
 Build steps complete + tested; **distribution-comparison validation only, no gold set (locked).**
 
-**Pipeline:** `judge_pilot.py` (driver, top-N topics, resumable `pilot_verdicts.jsonl`
-checkpoint) → `compare_verdicts.py --snapshot old.json` *before* / `--old old.json` *after*
-(the new axis is read from the never-overwritten `chunk_verdicts`). Free local Gemma-4-31B on
+**Pipeline:** `judge_pilot.py` (driver, top-N topics, resumable per-chunk JSONL checkpoint) →
+`compare_verdicts.py --snapshot old.json` *before* / `--old old.json` *after* (the new axis is
+read from the never-overwritten `chunk_verdicts`). Free local Gemma-4-31B on
 `start_llama_pilot.sh` (NO MTP, `--parallel 2 --ctx-size 32768`); driver runs locally with the
 CPU-only harrier tokenizer (`harrier_tokenizer/`, `--tokenizer harrier_tokenizer`).
 
-**Pilot run (top-4 topics = 102 papers; neuro/metaphorical strata `[11,18,19,13]`).** 1330
-chunk cells judged (2 dropped to malformed JSON, clean per-cell isolation). Categorical
-(old→new): two_worlds met 0→0 / unclear 1→0 / not_met 101→102; adaptors met 1→**3** / 1→0 /
-100→99; arbitrariness met 1→**2** / 5→0 / 96→100. Graded spread: two_worlds flat 0.0 (std 0);
-adaptors std 0.12; arbitrariness std 0.11. Pooled ρ(graded, e) ≈ ρ(cat, e), weak-positive
-where defined (two_worlds `n/a`, no variation).
-
-**Read (honest):**
-- **The two design risks did not materialise.** Halo-injection guard held — **7/7 positive
-  cells are quote-grounded** (e.g. histone "reader proteins (adapters)", lncRNA "address
-  code"), zero ungrounded false positives. The new judge is *more* skeptical than the old: it
-  collapsed the wishy-washy `unclear` bucket while surfacing a few *more* genuinely-grounded
-  `met`. Gradation moved off the dead `confidence` field onto `agreement`, as intended.
-- **Gradation is inconclusive in *this* stratum by design.** The top-4 are the neuro topics
-  §5 already flags as flat `not_met` on concrete criteria — little real positive signal to
-  grade. The graded axis took distinct levels (+0.5/+1.0) exactly where warranted; the
-  distribution is dominated by legitimate 0.0s. **The real gradation test is the molecular
-  "met" tail (low-frequency topics, outside the top-4)** — the natural next pilot.
-- **Status:** prompts validated as *not* literal-latching; before any corpus-wide or paid
-  (Nemotron) all-criteria run, pilot the molecular tail to confirm rich gradation materialises.
+**Pilot status.** First pilot (top-4 neuro topics, 102 papers, molecular defs) validated the
+design — the grounding gate held (every positive quote-grounded), the judge is *more* skeptical
+than the old one, and gradation moved onto `agreement`. It also exposed the molecular-bias
+prompt bug fixed in §9.1. Pilot results: `@test_runs.md` Runs 4–5. Before any corpus-wide or
+paid (Nemotron) all-criteria run, confirm rich gradation materialises on the molecular "met"
+tail (the natural next pilot, outside the neuro top-4).
 
 ### 9.1 Domain-general criteria (2026-06-16) — molecular-bias fix
-The first pilot exposed a **prompt bug**: `CRITERIA_DEFS` was written in molecular-specific
-language, so every non-molecular paper was mechanically rejected (two_worlds: **0** positives,
-310/443 reasoning cells citing "not *molecular* worlds"; adaptors positives only in the histonic
-molecular topic). Only `arbitrariness` was already abstract and worked across domains — it became
-the template. The three criterion definitions the judge operationalizes are now **domain-general**:
-they instantiate per discipline across the 24 topics (codons↔amino acids *or* stimulus↔spikes *or*
-sound↔percept …), with the molecular genetic code as one **exemplar**, not the requirement. The
-"adaptor" is generalised to the domain's **mediator** per **Major (2025), *From Code to Archetype***
-(the third term that reads/executes the mapping — tRNA/ribosome, nervous system, imaginal function,
-computational engine). The molecular control anchors are relabelled **ILLUSTRATIVE**. This broadens
-what the *judge* measures to match the field's own cross-domain claims; it does **not** alter
-Barbieri's strict molecular definition in §1. The DB criterion **key stays `adaptors`** (schema/PK
-stability); only its definition *text* changed. Next: re-pilot the same top-4 neuro topics to a
-fresh checkpoint and confirm two_worlds gains grounded non-molecular positives.
+The molecular-specific `CRITERIA_DEFS` mechanically rejected every non-molecular paper
+(two_worlds **0** positives, with reasoning citing "not *molecular* worlds"; adaptors positives
+only in the histonic molecular topic). Only `arbitrariness` was already abstract and worked
+across domains — it became the template. The three criterion definitions the judge
+operationalizes are now **domain-general**: they instantiate per discipline across the 24 topics
+(codons↔amino acids *or* stimulus↔spikes *or* sound↔percept …), with the molecular genetic code
+as one **exemplar**, not the requirement. The "adaptor" is generalised to the domain's
+**mediator** per **Major (2025), *From Code to Archetype*** (the third term that reads/executes
+the mapping — tRNA/ribosome, nervous system, imaginal function, computational engine). The
+molecular control anchors are relabelled **ILLUSTRATIVE**. This broadens what the *judge*
+measures to match the field's own cross-domain claims; it does **not** alter Barbieri's strict
+molecular definition in §1. The DB criterion **key stays `adaptors`** (schema/PK stability);
+only its definition *text* changed. The §9.1 re-pilot validating it is `@test_runs.md` Run 5.
