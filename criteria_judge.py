@@ -4,9 +4,13 @@ For each downloaded paper, decide — with grounded evidence — whether it argu
 that its object satisfies the three minimum criteria for an organic code
 (see CLAUDE.md):
 
-  1. two_worlds    — two independent worlds of molecules
-  2. adaptors      — a set of adaptors bridging them
+  1. two_worlds    — two independent worlds (sets of entities) with no necessary link
+  2. adaptors      — a mediator bridging them (Barbieri's adaptor generalised, Major 2025)
   3. arbitrariness — the coding rules are conventional, not physically dictated
+
+The criteria are domain-general: they instantiate across the 24 scientometric topics
+(molecular, neural, auditory, olfactory, epigenetic, cultural, ...), with the molecular
+genetic code as one exemplar rather than the requirement.
 
 Model routing (per project decision):
   * criteria 1 & 2 (concrete) → local Gemma-4-31B (OpenAI-compatible server)
@@ -222,12 +226,31 @@ SYSTEM_PROMPT = (
 )
 
 CRITERIA_DEFS = {
-    "two_worlds": "two independent worlds of molecules with no necessary "
-                  "physical/chemical link between them (e.g. codons and amino acids)",
-    "adaptors": "a set of adaptor molecules that physically bridge the two worlds "
-                "(e.g. tRNAs)",
-    "arbitrariness": "the coding rules are conventional, not dictated by physical "
-                     "law — they could in principle be otherwise",
+    "two_worlds": (
+        "two independent worlds: two distinct sets of entities — molecules, signals, "
+        "states, or representations — with no necessary physical/chemical/causal link, "
+        "so their elements could in principle be paired in more than one way. Instantiate "
+        "in THIS passage's domain: codons<->amino acids (molecular); stimulus "
+        "features<->neural spike patterns (neural); acoustic signal<->auditory percept "
+        "(auditory); odorant chemistry<->perceptual valence (olfactory); histone "
+        "marks<->gene-regulatory outcomes (epigenetic); signs<->meanings (cultural). "
+        "Judge whether two such worlds are argued here — not specifically molecular worlds"
+    ),
+    "adaptors": (
+        "a mediator: a third entity, distinct from both worlds, that physically reads and "
+        "executes the correspondence, translating one world into the other (Barbieri's "
+        "adaptor; Major 2025 generalises it to the domain's mediator). Need not be "
+        "molecular: tRNA/ribosome (molecular); a neural circuit or the nervous system "
+        "(neural, perceptual); receptor populations (sensory/auditory); imaginal function "
+        "(archetypal/cultural); a computational engine (artificial). Judge whether such a "
+        "mediating mechanism is argued here — not specifically an adaptor molecule"
+    ),
+    "arbitrariness": (
+        "the coding rules are conventional: compatible with but not determined by physical "
+        "law, so they could in principle be otherwise. Domain-general: a learned or cultural "
+        "mapping is arbitrary; a mapping dictated by stimulus physics or stereochemistry is "
+        "not"
+    ),
 }
 
 
@@ -275,9 +298,10 @@ CALIBRATION_PREAMBLE = (
     "High = would act on this without further checking; "
     "Medium = directionally clear, verify before relying on it; "
     "Low = a hypothesis, not a conclusion.\n"
-    "4. The two anchors below are reference poles: the AGREE anchor is a textbook passage "
-    "that clearly argues the criterion; the DISAGREE anchor clearly argues against it. "
-    "Calibrate your agreement level relative to these."
+    "4. The two anchors below are ILLUSTRATIVE reference poles, not the required form: the "
+    "AGREE anchor clearly argues the criterion (in its own domain), the DISAGREE anchor "
+    "clearly argues against it. Calibrate the abstract relation relative to these, then "
+    "judge it in THIS passage's domain."
 )
 
 STEELMAN_ARBITRARINESS = (
@@ -309,9 +333,12 @@ def build_chunk_prompt(chunk_text, criterion, topic_label, topic_blurb, controls
     parts = [
         CALIBRATION_PREAMBLE,
         f"Research area (CONTEXT ONLY): {topic_label} — {topic_blurb}",
-        "AGREE anchor (clearly argues the criterion):\n"
+        "AGREE anchor (ILLUSTRATIVE — the genetic code is the molecular exemplar of the "
+        "abstract relation; your passage's domain will differ, so match the relation, not "
+        "the molecules):\n"
         f"  {controls['genetic_code_positive']}",
-        "DISAGREE anchor (clearly argues against the criterion):\n"
+        "DISAGREE anchor (ILLUSTRATIVE — a physically-determined process, here molecular; "
+        "the principle is domain-general):\n"
         f"  {controls['deterministic_chemistry_negative']}",
         f'Criterion under judgement — "{criterion}": {CRITERIA_DEFS[criterion]}',
     ]

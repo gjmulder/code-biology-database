@@ -353,3 +353,19 @@ where defined (two_worlds `n/a`, no variation).
   "met" tail (low-frequency topics, outside the top-4)** — the natural next pilot.
 - **Status:** prompts validated as *not* literal-latching; before any corpus-wide or paid
   (Nemotron) all-criteria run, pilot the molecular tail to confirm rich gradation materialises.
+
+### 9.1 Domain-general criteria (2026-06-16) — molecular-bias fix
+The first pilot exposed a **prompt bug**: `CRITERIA_DEFS` was written in molecular-specific
+language, so every non-molecular paper was mechanically rejected (two_worlds: **0** positives,
+310/443 reasoning cells citing "not *molecular* worlds"; adaptors positives only in the histonic
+molecular topic). Only `arbitrariness` was already abstract and worked across domains — it became
+the template. The three criterion definitions the judge operationalizes are now **domain-general**:
+they instantiate per discipline across the 24 topics (codons↔amino acids *or* stimulus↔spikes *or*
+sound↔percept …), with the molecular genetic code as one **exemplar**, not the requirement. The
+"adaptor" is generalised to the domain's **mediator** per **Major (2025), *From Code to Archetype***
+(the third term that reads/executes the mapping — tRNA/ribosome, nervous system, imaginal function,
+computational engine). The molecular control anchors are relabelled **ILLUSTRATIVE**. This broadens
+what the *judge* measures to match the field's own cross-domain claims; it does **not** alter
+Barbieri's strict molecular definition in §1. The DB criterion **key stays `adaptors`** (schema/PK
+stability); only its definition *text* changed. Next: re-pilot the same top-4 neuro topics to a
+fresh checkpoint and confirm two_worlds gains grounded non-molecular positives.

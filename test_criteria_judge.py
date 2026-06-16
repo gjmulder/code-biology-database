@@ -94,6 +94,34 @@ def test_build_chunk_prompt_steelman_only_for_arbitrariness():
     assert cj.STEELMAN_ARBITRARINESS not in _build("adaptors")
 
 
+# --- domain-general criteria (apply across the 24 scientometric topics) ----
+
+def test_criteria_defs_are_domain_general_not_molecular():
+    """Each definition must instantiate beyond the molecular case: name >=2 non-molecular
+    domains so a neural/audio/cultural paper is judged on its own world, not rejected for
+    not being molecular (the molecular-bias bug the re-pilot targets)."""
+    for crit in ("two_worlds", "adaptors"):
+        d = cj.CRITERIA_DEFS[crit].lower()
+        non_molecular = [w for w in ("neural", "percept", "audit", "cultural", "sign")
+                         if w in d]
+        assert len(non_molecular) >= 2, f"{crit} names too few non-molecular domains: {d}"
+        # the definition must explicitly tell the judge not to require the molecular case
+        assert "not specifically" in d or "need not be molecular" in d
+
+
+def test_adaptors_def_generalises_to_mediator():
+    """Per Major (2025) the adaptor is the molecular instance of a domain-general mediator;
+    the DB key stays 'adaptors' but its definition text must carry the generalisation."""
+    assert "mediator" in cj.CRITERIA_DEFS["adaptors"].lower()
+
+
+def test_chunk_prompt_anchors_labelled_illustrative():
+    """The molecular control anchors must be framed as ILLUSTRATIVE of the abstract relation,
+    not as the required form (else they re-impose the molecular bias)."""
+    p = _build("two_worlds")
+    assert "ILLUSTRATIVE" in p
+
+
 # --- graded parsing + grounding -------------------------------------------
 
 def _graded(agreement, quote="", confidence="High"):
