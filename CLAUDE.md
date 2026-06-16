@@ -248,9 +248,6 @@ set:
 - **False positives/negatives** — the prompts read too literally, latching onto an isolated
   sentence rather than the sentence in the context of its paragraph. More contextual
   understanding is needed.
-- **Next quality step:** re-tune the judge prompts for paragraph-level context, then a
-  single higher-quality run sending **all three** criteria to Nemotron (≈ $9). A gold-set
-  κ/F1 validation of the verdicts themselves remains future work.
 - **Judge redesign (graded, per-chunk, grounded) — piloted 2026-06-16, see §9.** The
   literal-latching and the dead `confidence` axis above are exactly what the redesign targets;
   the pilot confirms the grounding gate kills ungrounded positives and moves gradation onto an
@@ -273,13 +270,6 @@ set:
    codebiology_$(date +%Y%m%d_%H%M%S).sql.gz` (connection detail in `@environment_notes.md`;
    dumps are gitignored). The migrations are idempotent and guarded, but the dump is the
    non-negotiable rollback path.
-
-### Production llama-server — RESTORED (2026-06-14)
-The production `llama-server` (Home Assistant voice agent) was restored at project pause:
-`cp ~/start_llama.prod.bak ~/start_llama.sh && sudo systemctl restart llama-server` (serving
-on :11434, active). The 3090 Ti is back on prod duty — **any future GPU/judging/embed work
-must first free it again** (`sudo systemctl stop llama-server`, do not leave prod down).
-(Operational detail in `@environment_notes.md`.)
 
 ## 8. Embedding side is at its ceiling — the constraint is label quality
 
