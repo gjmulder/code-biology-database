@@ -145,3 +145,32 @@ def test_aggregate_to_verdict_records_uses_graded_max_and_derived_categorical():
     tw_row = [r for r in rows if r[2] == "two_worlds"][0]
     assert tw_row == (1, "a.pdf", "two_worlds", "met", 1.0, 1.0, "gemma-4-31b",
                       cj.prompt_hash("two_worlds"), "t")
+
+
+# --- judge backend selection (local Gemma vs DeepSeek V4 Pro) --------------
+
+def test_make_judge_local_returns_gemma_tag():
+    complete, model = jp.make_judge("local", host="http://x:11434")
+    assert callable(complete)
+    assert model == jp.cj.LOCAL_MODEL
+
+
+def test_make_judge_deepseek_pins_model_and_passes_meter(monkeypatch):
+    seen = {}
+
+    def fake_factory(reasoning_effort=None, meter=None):
+        seen["reasoning"] = reasoning_effort
+        seen["meter"] = meter
+        return lambda *a, **k: "{}"
+
+    monkeypatch.setattr(jp.cj, "openrouter_graded_factory", fake_factory)
+    meter = object()
+    complete, model = jp.make_judge("deepseek", reasoning="high", meter=meter)
+    assert model == jp.cj.DEEPSEEK_MODEL
+    assert seen["reasoning"] == "high" and seen["meter"] is meter
+
+
+def test_make_judge_rejects_unknown():
+    import pytest
+    with pytest.raises(ValueError):
+        jp.make_judge("gpt5")

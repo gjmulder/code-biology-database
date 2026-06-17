@@ -40,9 +40,49 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TOP = 4
 DEFAULT_CHECKPOINT = "pilot_verdicts.jsonl"
+DEEPSEEK_CHECKPOINT = "deepseek_verdicts.jsonl"
 DEFAULT_TOKENIZER = "/data/vllm/harrier-oss-v1-27b"
 AUGMENTED_CSV = "code-categories-augmented.csv"
 PROTOTYPES_JSON = "prototypes.json"
+
+
+# --- judge backend selection ----------------------------------------------
+
+def make_judge(judge, host="http://asushimu:11434", reasoning="high", meter=None):
+    """Return ``(complete_callable, model_tag)`` for the selected judge backend.
+
+    * ``"local"``    — free local Gemma (:func:`criteria_judge.local_complete_factory`),
+      tagged :data:`criteria_judge.LOCAL_MODEL`.
+    * ``"deepseek"`` — OpenRouter DeepSeek V4 Pro at the given reasoning effort, provider-pinned
+      to the implicit-caching first-party endpoint, usage fed to ``meter``; tagged
+      :data:`criteria_judge.DEEPSEEK_MODEL`. The ``model_tag`` is persisted on every
+      chunk_verdict / verdict so the two judges' labels are distinguishable in the DB."""
+    if judge == "local":
+        return cj.local_complete_factory(host=host), cj.LOCAL_MODEL
+    if judge == "deepseek":
+        return cj.openrouter_graded_factory(reasoning_effort=reasoning, meter=meter), cj.DEEPSEEK_MODEL
+    raise ValueError(f"unknown judge {judge!r} (expected 'local' or 'deepseek')")
+
+
+def report_usage(meter, papers, corpus=219):
+    """Log measured DeepSeek token usage + real cost, and a linear corpus extrapolation.
+
+    The extrapolation is per-paper (``cost / papers * corpus``) — a confirmation aid, not a
+    contract: reasoning-token output varies by paper, so treat the full-corpus figure as a
+    planning estimate to be re-checked once the corpus mix is known."""
+    cost = meter.cost()
+    cached_frac = (meter.cached_tokens / meter.prompt_tokens) if meter.prompt_tokens else 0.0
+    logger.info("DeepSeek usage: %d calls over %d papers", meter.calls, papers)
+    logger.info("  input tokens   : %d (%d cached = %.1f%% served at cache-read rate)",
+                meter.prompt_tokens, meter.cached_tokens, 100 * cached_frac)
+    logger.info("  output tokens  : %d (of which %d reasoning)",
+                meter.completion_tokens, meter.reasoning_tokens)
+    logger.info("  measured cost  : $%.4f  ($%.5f / paper)",
+                cost, cost / papers if papers else 0.0)
+    if papers:
+        logger.info("  -> extrapolated full corpus (%d papers): ~$%.2f", corpus,
+                    cost / papers * corpus)
+    return cost
 
 
 # --- augmented-topic loading (label + centroid blurb for grounding) --------
@@ -215,7 +255,14 @@ def main():
                          "outside the neuro top-N) instead of the top-N themselves")
     ap.add_argument("--run", default="baseline", help="embedding run whose chunk_topics to use")
     ap.add_argument("--method", default="chunk")
-    ap.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
+    ap.add_argument("--judge", choices=("local", "deepseek"), default="local",
+                    help="judge backend: free local Gemma, or OpenRouter DeepSeek V4 Pro")
+    ap.add_argument("--reasoning", default="high",
+                    help="DeepSeek reasoning effort (high|medium|low); ignored for local")
+    ap.add_argument("--checkpoint", default=None,
+                    help="checkpoint JSONL (default: per-judge — pilot_verdicts / deepseek_verdicts)")
+    ap.add_argument("--no-persist", action="store_true",
+                    help="skip the MySQL write (checkpoint only) — for pricing / smoke runs")
     ap.add_argument("--tokenizer", default=DEFAULT_TOKENIZER,
                     help="harrier tokenizer path (CPU only — no model weights / GPU)")
     ap.add_argument("--host", default="http://asushimu:11434",
@@ -224,12 +271,19 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="cap papers (0 = all selected)")
     args = ap.parse_args()
 
+    checkpoint = args.checkpoint or (
+        DEEPSEEK_CHECKPOINT if args.judge == "deepseek" else DEFAULT_CHECKPOINT)
+
     topics = load_augmented_topics()
     controls = json.load(open(PROTOTYPES_JSON, encoding="utf-8"))["_controls"]
 
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
-    complete = cj.local_complete_factory(host=args.host)
+    meter = cj.UsageMeter() if args.judge == "deepseek" else None
+    complete, model_tag = make_judge(args.judge, host=args.host,
+                                     reasoning=args.reasoning, meter=meter)
+    logger.info("judge=%s model=%s checkpoint=%s%s", args.judge, model_tag, checkpoint,
+                " [no-persist]" if args.no_persist else "")
 
     # Initial reads (topic assignments + codes) on a short-lived connection. We do NOT hold
     # this open across the multi-hour judging loop: an idle conn past MySQL ``wait_timeout``
@@ -250,7 +304,7 @@ def main():
                 len(pids), "OUTSIDE" if args.rest else "across", args.top,
                 top_topic_ids(chunk_topics, n=args.top))
 
-    done = load_done(args.checkpoint)
+    done = load_done(checkpoint)
     write_lock = threading.Lock()
 
     def work(pid):
@@ -259,7 +313,7 @@ def main():
         full_text = pdf_text.extract_text(pid)
         meta = _paper_meta_from_codes(pid, codes)
         return judge_paper_chunks(meta, full_text, tokenizer, label, blurb,
-                                  controls, complete, args.checkpoint, done, write_lock)
+                                  controls, complete, checkpoint, done, write_lock)
 
     # No DB connection is held during judging — all output goes to the JSONL checkpoint
     # (the system of record), so a drop here costs nothing and persistence reads it back.
@@ -273,9 +327,16 @@ def main():
                 logger.warning("skipping paper %s: %s", pid, exc)
             logger.info("paper %d/%d done (%s)", n, len(pids), pid)
 
+    if meter is not None:
+        report_usage(meter, papers=len(pids), corpus=219)
+
+    if args.no_persist:
+        logger.info("--no-persist: skipping MySQL write (checkpoint %s is the record)", checkpoint)
+        return
+
     # Persist from the *full* checkpoint (resilient to resumed runs), not just this
     # invocation's records, so aggregation always sees every judged chunk.
-    ckpt_records = _read_checkpoint(args.checkpoint, set(pids))
+    ckpt_records = _read_checkpoint(checkpoint, set(pids))
     # Stamp prompt provenance: records from an older checkpoint predate the prompt_hash
     # field, so back-fill it from the live prompt version (correct because persistence
     # runs under the same code that produced these verdicts), and register the templates.
@@ -294,7 +355,7 @@ def main():
     # from the top on a fresh connection if the link drops mid-write — no data is lost.
     def _persist(conn):
         db.register_prompts(conn, prompt_entries)
-        n_chunks = db.store_chunk_verdicts(conn, ckpt_records, model=cj.LOCAL_MODEL)
+        n_chunks = db.store_chunk_verdicts(conn, ckpt_records, model=model_tag)
         n_verdicts = db.update_verdicts(conn, verdict_records)
         return n_chunks, n_verdicts
     n_chunks, n_verdicts = db.run_with_reconnect(_persist)
