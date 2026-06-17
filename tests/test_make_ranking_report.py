@@ -79,6 +79,9 @@ def test_load_papers_from_db_uses_reconnect(monkeypatch):
     score_rows = [(62, "pdfs/x.pdf", "two_worlds", 0.081)]
     verdict_rows = [("pdfs/x.pdf", "two_worlds", "met", 1.0, 0.95)]
 
+    ct_rows = [("pdfs/x.pdf", 0, 18, 0.9)]
+    cen_rows = [(18, "Histone")]
+
     class FakeCursor:
         def __init__(self):
             self.q = None
@@ -87,7 +90,13 @@ def test_load_papers_from_db_uses_reconnect(monkeypatch):
             self.q = sql
 
         def fetchall(self):
-            return verdict_rows if "verdicts" in self.q else score_rows
+            if "FROM verdicts" in self.q:
+                return verdict_rows
+            if "FROM chunk_topics" in self.q:
+                return ct_rows
+            if "FROM topic_centroids" in self.q:
+                return cen_rows
+            return score_rows
 
     class FakeConn:
         def cursor(self):
@@ -97,6 +106,40 @@ def test_load_papers_from_db_uses_reconnect(monkeypatch):
     recs = mr.load_papers_from_db()
     assert len(recs) == 1
     assert recs[0]["verdict"]["two_worlds"] == "met"
+    assert recs[0]["topics"] == ["Histone"]
+    assert recs[0]["dominant_topic"] == "Histone"
+
+
+# --- topic coverage --------------------------------------------------------
+
+def test_paper_topics_dominant_first_then_by_chunk_count():
+    # topic 18 has the single strongest chunk (0.95) -> dominant by max-pool affinity;
+    # topic 11 covers the most chunks (3) -> first of the remainder.
+    chunks = [(0, 11, 0.9), (1, 11, 0.8), (2, 11, 0.7), (3, 18, 0.95), (4, 7, 0.4)]
+    labels = {11: "Neural", 18: "Histone", 7: "Regulatory"}
+    assert mr.paper_topics(chunks, labels) == ["Histone", "Neural", "Regulatory"]
+
+
+def test_paper_topics_empty_and_missing_label():
+    assert mr.paper_topics([], {}) == []
+    # an unlabelled topic id degrades to a "topic N" placeholder, still listed
+    assert mr.paper_topics([(0, 42, 0.5)], {}) == ["topic 42"]
+
+
+def test_attach_topics_sets_list_and_dominant():
+    recs = [
+        {"code": 62, "pdf_path": "pdfs/x.pdf"},
+        {"code": 99, "pdf_path": "pdfs/notopic.pdf"},  # no chunk topics
+    ]
+    chunk_topics = {"pdfs/x.pdf": [(0, 11, 0.6), (1, 18, 0.9)]}
+    centroids = {11: {"label": "Neural"}, 18: {"label": "Histone"}}
+    mr.attach_topics(recs, chunk_topics, centroids)
+    by_code = {r["code"]: r for r in recs}
+    assert by_code[62]["dominant_topic"] == "Histone"  # max affinity
+    assert by_code[62]["topics"] == ["Histone", "Neural"]
+    # paper with no chunk topics degrades to empty list / blank dominant
+    assert by_code[99]["topics"] == []
+    assert by_code[99]["dominant_topic"] == ""
 
 
 # --- citation join ---------------------------------------------------------
@@ -148,25 +191,39 @@ def test_build_html_is_self_contained_with_inlined_data(tmp_path):
     assert len(data) == len(papers) == 1
     # fully offline: no external script/style sources
     assert not re.search(r'(src|href)\s*=\s*["\']https?://', html)
-    # the two axes are 'pages' (renamed chunk embedding) and 'verdicts'; metrics kept;
-    # the retired full/abstract axes are gone from the selector
-    for token in ("pages", "verdicts", "mean", "median", "min"):
+    # the two axes are the chunk embedding ("similarity to genetic code", internal key
+    # 'pages') and the "LLM verdicts" (internal key 'verdicts'); metrics kept; the retired
+    # full/abstract axes are gone from the selector
+    for token in ('data-v="pages"', 'data-v="verdicts"', "similarity to genetic code",
+                  "LLM verdicts", "mean", "median", "min"):
         assert token in html
     assert 'data-v="full"' not in html
     assert 'data-v="abstract"' not in html
     assert 'data-v="chunk"' not in html
+    # the topic-coverage column is present (JS-rendered header) and sortable
+    assert 'th("topics","Topics"' in html
+    assert "topicsHTML(p)" in html
 
 
 def test_main_writes_html_file_from_db(tmp_path, monkeypatch):
     score_rows = [(62, "pdfs/10.1234_x.pdf", c, 0.05) for c in mr.CRITERIA]
     verdict_rows = [("pdfs/10.1234_x.pdf", "two_worlds", "met", 1.0, 0.95)]
 
+    ct_rows = [("pdfs/10.1234_x.pdf", 0, 18, 0.9)]
+    cen_rows = [(18, "Histone")]
+
     class FakeCursor:
         def execute(self, sql, *a):
-            self._v = "verdicts" in sql
+            self.q = sql
 
         def fetchall(self):
-            return verdict_rows if self._v else score_rows
+            if "FROM verdicts" in self.q:
+                return verdict_rows
+            if "FROM chunk_topics" in self.q:
+                return ct_rows
+            if "FROM topic_centroids" in self.q:
+                return cen_rows
+            return score_rows
 
     class FakeConn:
         def cursor(self):
@@ -178,4 +235,6 @@ def test_main_writes_html_file_from_db(tmp_path, monkeypatch):
     out = str(tmp_path / "out.html")
     mr.main(["--codes", codes, "--out", out])
     assert os.path.exists(out)
-    assert "<table" in open(out, encoding="utf-8").read()
+    html = open(out, encoding="utf-8").read()
+    assert "<table" in html
+    assert "Histone" in html  # topic coverage surfaced in the inlined data
