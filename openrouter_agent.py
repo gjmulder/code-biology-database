@@ -70,13 +70,13 @@ class OpenRouterClient:
             "X-Title": self.title,
         }
 
-    def call_model(self, model, messages, tools=None, response_format=None,
-                   temperature=None, max_tokens=None):
-        """POST a chat completion and return the assistant message dict.
+    def _build_body(self, model, messages, tools=None, response_format=None,
+                    temperature=None, max_tokens=None, reasoning=None, provider=None):
+        """Assemble the chat-completion request body, omitting unset options.
 
-        Retries 429 and 5xx with exponential backoff (honouring ``Retry-After``);
-        other 4xx are fatal. ``tools`` may include the ``_func`` key from
-        :func:`tool` — it is stripped before sending.
+        ``reasoning`` (e.g. ``{"effort": "high"}``) and ``provider`` (OpenRouter routing
+        preferences, e.g. pinning the implicit-caching DeepSeek first-party endpoint) are
+        passed through verbatim. ``tools`` may carry the internal ``_func`` key — stripped here.
         """
         body = {"model": model, "messages": messages}
         if tools:
@@ -87,18 +87,49 @@ class OpenRouterClient:
             body["temperature"] = temperature
         if max_tokens is not None:
             body["max_tokens"] = max_tokens
+        if reasoning is not None:
+            body["reasoning"] = reasoning
+        if provider is not None:
+            body["provider"] = provider
+        return body
 
+    def _post(self, body):
+        """POST a prepared body and return the full response JSON.
+
+        Retries 429 and 5xx with exponential backoff (honouring ``Retry-After``); other 4xx
+        are fatal.
+        """
         url = f"{self.base_url}/chat/completions"
         for attempt in range(self.max_retries + 1):
             resp = requests.post(url, headers=self._headers(), json=body, timeout=DEFAULT_TIMEOUT)
             if resp.status_code == 200:
-                return resp.json()["choices"][0]["message"]
+                return resp.json()
             if resp.status_code == 429 or resp.status_code >= 500:
                 if attempt < self.max_retries:
                     self._sleep_before_retry(resp, attempt)
                     continue
                 raise OpenRouterError(f"giving up after {attempt + 1} attempts: HTTP {resp.status_code}")
             raise OpenRouterError(f"HTTP {resp.status_code}: {resp.text[:300]}")
+
+    def call_model(self, model, messages, tools=None, response_format=None,
+                   temperature=None, max_tokens=None, reasoning=None, provider=None):
+        """POST a chat completion and return the assistant message dict."""
+        body = self._build_body(model, messages, tools, response_format,
+                                temperature, max_tokens, reasoning, provider)
+        return self._post(body)["choices"][0]["message"]
+
+    def call_model_usage(self, model, messages, tools=None, response_format=None,
+                         temperature=None, max_tokens=None, reasoning=None, provider=None):
+        """Like :meth:`call_model` but also return the response ``usage`` block.
+
+        Returns ``(message, usage)``. ``usage`` carries ``prompt_tokens`` /
+        ``completion_tokens`` and, on an implicit-caching provider, the
+        ``prompt_tokens_details.cached_tokens`` needed to bill the cache-read discount.
+        """
+        body = self._build_body(model, messages, tools, response_format,
+                                temperature, max_tokens, reasoning, provider)
+        data = self._post(body)
+        return data["choices"][0]["message"], (data.get("usage") or {})
 
     def _sleep_before_retry(self, resp, attempt):
         retry_after = resp.headers.get("Retry-After")

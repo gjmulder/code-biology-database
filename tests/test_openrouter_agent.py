@@ -79,6 +79,50 @@ def test_call_model_passes_response_format_and_tools(monkeypatch):
     assert captured["body"]["response_format"] == {"type": "json_object"}
 
 
+def test_call_model_passes_reasoning_and_provider(monkeypatch):
+    """reasoning effort and provider routing preferences must reach the request body — the
+    levers for high-reasoning judging and pinning the implicit-caching DeepSeek provider."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    captured = {}
+    monkeypatch.setattr(oa.requests, "post",
+                        lambda url, headers, json, timeout: captured.update(body=json) or FakeResp(200, _completion("ok")))
+    client = oa.OpenRouterClient()
+    client.call_model("m", [{"role": "user", "content": "x"}],
+                      reasoning={"effort": "high"},
+                      provider={"order": ["deepseek"], "allow_fallbacks": False})
+    assert captured["body"]["reasoning"] == {"effort": "high"}
+    assert captured["body"]["provider"] == {"order": ["deepseek"], "allow_fallbacks": False}
+
+
+def test_call_model_usage_returns_message_and_usage(monkeypatch):
+    """call_model_usage exposes the response usage block (prompt/cached/completion tokens) so
+    the caller can compute real spend including the cache-read discount."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    payload = _completion("ok")
+    payload["usage"] = {"prompt_tokens": 8000, "completion_tokens": 120,
+                        "prompt_tokens_details": {"cached_tokens": 7800},
+                        "completion_tokens_details": {"reasoning_tokens": 60}}
+    monkeypatch.setattr(oa.requests, "post", lambda *a, **k: FakeResp(200, payload))
+    client = oa.OpenRouterClient()
+    msg, usage = client.call_model_usage("m", [{"role": "user", "content": "x"}])
+    assert msg["content"] == "ok"
+    assert usage["prompt_tokens"] == 8000
+    assert usage["prompt_tokens_details"]["cached_tokens"] == 7800
+
+
+def test_call_model_usage_retries_like_call_model(monkeypatch):
+    """The usage variant shares the retry/backoff path."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setattr(oa.time, "sleep", lambda *_: None)
+    payload = _completion("done")
+    payload["usage"] = {"prompt_tokens": 1}
+    responses = [FakeResp(429, headers={"Retry-After": "0"}), FakeResp(200, payload)]
+    monkeypatch.setattr(oa.requests, "post", lambda *a, **k: responses.pop(0))
+    client = oa.OpenRouterClient(max_retries=3)
+    msg, usage = client.call_model_usage("m", [{"role": "user", "content": "x"}])
+    assert msg["content"] == "done" and usage["prompt_tokens"] == 1
+
+
 # --- retry / backoff -------------------------------------------------------
 
 def test_call_model_retries_on_429_then_succeeds(monkeypatch):

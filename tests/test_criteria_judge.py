@@ -94,6 +94,23 @@ def test_build_chunk_prompt_steelman_only_for_arbitrariness():
     assert cj.STEELMAN_ARBITRARINESS not in _build("adaptors")
 
 
+def test_build_chunk_prompt_passage_is_cacheable_prefix():
+    """The passage + calibration/topic/anchor scaffold is identical across all three criteria
+    of a chunk, so it is the cacheable PREFIX; the criterion-specific block (definition, and
+    arbitrariness steelman) is the per-call SUFFIX and must come AFTER the passage. This is what
+    lets an implicit-caching provider serve the ~8k-token passage from cache on the 2nd/3rd
+    criterion call (criteria_judge.openrouter_graded_factory)."""
+    p = _build("arbitrariness")
+    passage_at = p.index("=== PASSAGE ===")
+    assert passage_at < p.index(cj.CRITERIA_DEFS["arbitrariness"])
+    assert passage_at < p.index(cj.STEELMAN_ARBITRARINESS)
+    # the shared prefix (everything up to and including the passage) is byte-identical across
+    # criteria -> caching spans it
+    prefix_tw = _build("two_worlds").split("=== PASSAGE ===")[0]
+    prefix_ad = _build("adaptors").split("=== PASSAGE ===")[0]
+    assert prefix_tw == prefix_ad
+
+
 # --- domain-general criteria (apply across the 24 scientometric topics) ----
 
 def test_criteria_defs_are_domain_general_not_molecular():
@@ -480,3 +497,53 @@ def test_run_batch_isolates_failing_paper(tmp_path):
     assert cj.load_done(str(ckpt)) == {"good.pdf"}
     assert len(records) == 1
     assert records[0]["pdf_path"] == "good.pdf"
+
+
+# --- DeepSeek graded judge: usage metering + factory -----------------------
+
+def test_usage_meter_accumulates_and_bills_cache_discount():
+    """UsageMeter sums tokens across calls and bills fresh-input, cache-read and completion
+    separately, so the (≈120× cheaper) DeepSeek cache-read shows up in the cost."""
+    m = cj.UsageMeter()
+    m.add({"prompt_tokens": 8000, "completion_tokens": 100,
+           "prompt_tokens_details": {"cached_tokens": 0}})           # 1st call: nothing cached
+    m.add({"prompt_tokens": 8000, "completion_tokens": 100,
+           "prompt_tokens_details": {"cached_tokens": 7800},
+           "completion_tokens_details": {"reasoning_tokens": 40}})    # cache hit on the prefix
+    assert m.calls == 2
+    assert m.prompt_tokens == 16000
+    assert m.cached_tokens == 7800
+    assert m.completion_tokens == 200
+    assert m.reasoning_tokens == 40
+    # cost = fresh_input*in + cached*cache_read + completion*out, all per-1M
+    fresh = 16000 - 7800
+    expected = (fresh * 0.435 + 7800 * 0.003625 + 200 * 0.87) / 1e6
+    assert m.cost(0.435, 0.003625, 0.87) == pytest.approx(expected)
+
+
+def test_openrouter_graded_factory_pins_provider_and_meters(monkeypatch):
+    """The factory routes high-reasoning to the implicit-caching DeepSeek provider, returns the
+    message content, and feeds usage into the meter."""
+    captured = {}
+
+    class FakeClient:
+        def call_model_usage(self, model, messages, response_format=None,
+                             temperature=None, reasoning=None, provider=None):
+            captured.update(model=model, messages=messages, reasoning=reasoning,
+                            provider=provider, temperature=temperature)
+            return ({"content": _graded("agree", quote="q")},
+                    {"prompt_tokens": 10, "completion_tokens": 2,
+                     "prompt_tokens_details": {"cached_tokens": 8}})
+
+    meter = cj.UsageMeter()
+    complete = cj.openrouter_graded_factory(client=FakeClient(), reasoning_effort="high",
+                                            meter=meter)
+    out = complete("sys", "user", response_format={"type": "json_object"})
+
+    assert '"agreement": "agree"' in out
+    assert captured["model"] == cj.DEEPSEEK_MODEL
+    assert captured["reasoning"] == {"effort": "high"}
+    # pinned to the first-party deepseek endpoint (the only one with implicit caching)
+    assert "deepseek" in captured["provider"]["order"]
+    assert captured["provider"]["allow_fallbacks"] is False
+    assert meter.calls == 1 and meter.cached_tokens == 8

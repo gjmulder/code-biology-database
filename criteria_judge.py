@@ -355,19 +355,26 @@ def _criterion_block(criterion):
 def build_chunk_prompt(chunk_text, criterion, topic_label, topic_blurb, controls):
     """Build the per-chunk, per-criterion graded prompt.
 
-    Layers (plan §Design): calibration preamble → topic grounding (dominant-topic label +
-    centroid blurb, as CONTEXT only) → AGREE/DISAGREE control anchors → criterion definition
-    → strict graded JSON schema → the passage. The arbitrariness steelman is injected only
-    for that criterion (its two controls are precisely its two poles)."""
+    Layers: calibration preamble → topic grounding (dominant-topic label + centroid blurb, as
+    CONTEXT only) → AGREE/DISAGREE control anchors → **the passage** → criterion definition →
+    strict graded JSON schema. The arbitrariness steelman is injected only for that criterion.
+
+    PREFIX-CACHING ORDER: everything up to and including the passage is identical across the
+    three criteria calls for a given chunk, so it forms a long shared PREFIX an implicit-caching
+    provider (DeepSeek first-party) serves from cache on the 2nd/3rd call — the ~8k-token passage
+    is paid full price once, cache-read (≈120× cheaper) twice. Only the small criterion-specific
+    block + schema vary per call, so they are the SUFFIX (see openrouter_graded_factory). The
+    prompt-version hash (prompt_template/prompt_hash) is unaffected: it excludes the passage and
+    captures scaffold *content*, not this delivery ordering."""
     parts = [
         CALIBRATION_PREAMBLE,
         f"Research area (CONTEXT ONLY): {topic_label} — {topic_blurb}",
         f"{ANCHOR_AGREE_FRAMING}\n  {controls['genetic_code_positive']}",
         f"{ANCHOR_DISAGREE_FRAMING}\n  {controls['deterministic_chemistry_negative']}",
+        f"=== PASSAGE ===\n{chunk_text}",
     ]
     parts += _criterion_block(criterion)
     parts.append(f"{QUESTION_LINE}\nReturn exactly this JSON shape:\n{_graded_schema()}")
-    parts.append(f"=== PASSAGE ===\n{chunk_text}")
     return "\n\n".join(parts)
 
 
@@ -614,6 +621,86 @@ def openrouter_complete_factory(client=None, model=OPENROUTER_MODEL):
             response_format=response_format,
             temperature=0.4,
         )
+        return msg.get("content") or ""
+
+    return complete
+
+
+# --- DeepSeek V4 Pro graded judge (high-reasoning, implicit-caching) --------
+#
+# A higher-quality replacement for the local Gemma graded judge (CLAUDE.md §6/§8: label
+# quality is the binding constraint). Routed via OpenRouter and PINNED to the DeepSeek
+# first-party endpoint, which is both the cheapest and the only one advertising
+# ``supports_implicit_caching`` — so the ~8k-token passage that build_chunk_prompt places at
+# the head of the prompt is served from cache on the 2nd/3rd criterion call of each chunk at
+# the cache-read rate (≈120× cheaper than fresh input). Prices are per-1M tokens, taken from
+# the OpenRouter endpoints API for tag "deepseek" (2026-06-17); confirm against a small batch
+# before a full corpus run (the run prints measured usage + cost via UsageMeter).
+
+DEEPSEEK_MODEL = "deepseek/deepseek-v4-pro"
+DEEPSEEK_PROVIDER = {"order": ["deepseek"], "allow_fallbacks": False}
+DEEPSEEK_PRICE_IN = 0.435          # $ / 1M fresh input tokens
+DEEPSEEK_PRICE_CACHE_READ = 0.003625  # $ / 1M cached (prefix-hit) input tokens
+DEEPSEEK_PRICE_OUT = 0.87          # $ / 1M completion tokens (reasoning tokens included here)
+
+
+class UsageMeter:
+    """Thread-safe accumulator of OpenRouter token usage for real-spend reporting.
+
+    Sums ``prompt_tokens`` / ``completion_tokens`` and, where the provider reports it, the
+    cached prefix tokens (``prompt_tokens_details.cached_tokens``) and reasoning tokens. Bills
+    fresh input, cache-read input and completion at separate per-1M rates so the cache discount
+    is visible in :meth:`cost`."""
+
+    def __init__(self):
+        import threading
+        self._lock = threading.Lock()
+        self.calls = 0
+        self.prompt_tokens = 0
+        self.cached_tokens = 0
+        self.completion_tokens = 0
+        self.reasoning_tokens = 0
+
+    def add(self, usage):
+        pdet = usage.get("prompt_tokens_details") or {}
+        cdet = usage.get("completion_tokens_details") or {}
+        with self._lock:
+            self.calls += 1
+            self.prompt_tokens += int(usage.get("prompt_tokens", 0) or 0)
+            self.completion_tokens += int(usage.get("completion_tokens", 0) or 0)
+            self.cached_tokens += int(pdet.get("cached_tokens", 0) or 0)
+            self.reasoning_tokens += int(cdet.get("reasoning_tokens", 0) or 0)
+
+    def cost(self, in_price=DEEPSEEK_PRICE_IN, cache_read_price=DEEPSEEK_PRICE_CACHE_READ,
+             out_price=DEEPSEEK_PRICE_OUT):
+        """Total $ for the accumulated usage. ``cached_tokens`` are billed at the cache-read
+        rate and the remainder of ``prompt_tokens`` at the fresh-input rate."""
+        fresh = max(0, self.prompt_tokens - self.cached_tokens)
+        return (fresh * in_price + self.cached_tokens * cache_read_price
+                + self.completion_tokens * out_price) / 1e6
+
+
+def openrouter_graded_factory(client=None, model=DEEPSEEK_MODEL, reasoning_effort="high",
+                              provider=None, meter=None, temperature=0.4):
+    """A graded ``complete(system, user, response_format)`` callable on DeepSeek V4 Pro.
+
+    Pins the implicit-caching DeepSeek first-party provider (``DEEPSEEK_PROVIDER``) and requests
+    the given reasoning effort. If ``meter`` is a :class:`UsageMeter`, each call's token usage is
+    accumulated for cost reporting."""
+    from openrouter_agent import OpenRouterClient
+
+    client = client or OpenRouterClient()
+    provider = DEEPSEEK_PROVIDER if provider is None else provider
+    reasoning = {"effort": reasoning_effort} if reasoning_effort else None
+
+    def complete(system, user, response_format=None):
+        msg, usage = client.call_model_usage(
+            model,
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            response_format=response_format, temperature=temperature,
+            reasoning=reasoning, provider=provider)
+        if meter is not None:
+            meter.add(usage)
         return msg.get("content") or ""
 
     return complete
