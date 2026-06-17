@@ -318,3 +318,32 @@ design-consistent with the §9.1 judge, and are kept as the new `baseline`, but 
 rather than fix the §8 verdict — **the binding constraint is label quality, not the embedding
 axis.** All three of Run 6's options are now spent on the embedding side; the real next step is
 unchanged: the gold-set validation (MEMORY), not more axis tuning.
+
+## Run 8 — AGREE-anchor ablation, paid DeepSeek (2026-06-17, COMPLETE)
+
+Tests the §9 worry that the judge's molecular-genetic AGREE exemplar biases it toward marking
+passages "met". `judge_pilot.py --agree-anchors {genetic,neural,neural-genetic}` swaps **only the
+AGREE example's domain** — molecular genetic 1-shot (baseline, untagged) vs neural 1-shot
+(`@neural-1shot`) vs neural+genetic 2-shot (`@neural-genetic-2shot`) — leaving the prompt
+otherwise identical. Run paid on **DeepSeek V4 Pro** over the same **60-paper top-4 neuro set**
+(`--limit 60`), each variant under its own judge tag + checkpoint so all three coexist with the
+baseline (§3). Cost: neural-1shot $2.33, neural-genetic-2shot $2.05. 180 verdicts (60 papers × 3
+criteria) per variant; comparison on the 180 shared `(code, pdf, criterion)` keys.
+
+| criterion | mean graded (gen / n1 / ng2) | Δ mean (n1−gen / ng2−gen) | met (gen / n1 / ng2) |
+|---|---|---|---|
+| two_worlds    | +0.042 / +0.067 / +0.008 | +0.025 / −0.033 | 4 / 6 / 1 |
+| adaptors      | +0.058 / +0.067 / +0.042 | +0.008 / −0.017 | 4 / 8 / 6 |
+| arbitrariness | +0.017 / −0.017 / +0.008 | −0.033 / −0.008 | 3 / 1 / 1 |
+
+Per-key change rate: **neural-1shot** moved graded on only 25/180 keys (13 up / 12 down — sign
+balanced), 14 categorical flips (9 →met, 5 met→); **neural-genetic-2shot** moved 16/180 (6 up /
+10 down), 9 flips (3 →met, 6 met→).
+
+**Conclusion — negative result: the genetic anchor is not biasing the judge.** Swapping the AGREE
+exemplar's domain moves ~9–14% of judgments with effect sizes ≤0.033 on the −1…+1 scale
+(noise-level). The only directional hint is a weak **domain-matching** lift from the neural
+**1-shot** anchor (net +2 met two_worlds, +4 adaptors on these neuro papers), but the **2-shot**
+washes it out and trends slightly *more* skeptical — so there is no robust molecular halo. The
+verdicts are robust to the exemplar's domain, which supports (does not threaten) label quality.
+Variants kept non-destructively under their tags; baseline `deepseek/deepseek-v4-pro` unchanged.

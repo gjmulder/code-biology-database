@@ -245,6 +245,8 @@ harrier_tokenizer/
 # Pre-redesign verdict baseline snapshots (inputs to compare_verdicts.py)
 old_*.json
 
-# Archive of stale/transient artifacts from prior runs (snapshots, duplicate HF
-# tokenizer copies, retired checkpoints). Not source; MySQL is the system of record.
+# Archive of stale/transient artifacts from prior runs (snapshots, retired
+# checkpoints). Not source; MySQL is the system of record. NOTE: do NOT move the
+# live harrier_tokenizer/ here — it is pipeline input (judge_pilot --tokenizer),
+# not an archive copy; emptying it breaks the per-chunk judge.
 json/

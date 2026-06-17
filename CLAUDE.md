@@ -38,7 +38,7 @@ the §4 levers strip, reused as a **stratifier** — it lets us ask whether `e` 
 ### The three criteria (the definition being measured)
 Per Barbieri (`www.codebiology.org/index.html`), a biological code exists only if **all three**
 are demonstrated (objective, experimentally falsifiable):
-1. **Two independent worlds of molecules** — two distinct sets with no necessary
+1. **Two independent worlds** — two distinct sets with no necessary
    physical/chemical link (e.g. codons and amino acids).
 2. **A set of adaptors** — a *third* molecule that physically bridges the two worlds (e.g.
    tRNAs); the empirical "molecular fingerprint" of a code.
@@ -314,12 +314,15 @@ corpus-wide ρ divergence (§5): `@test_runs.md` Runs 4–7. A **corpus-wide / p
 is gated on the gold-set plan, not on ρ(e, verdict)** — which no longer adjudicates the
 domain-general judge corpus-wide (§5).
 
-**AGREE-anchor ablation (in flight).** `judge_pilot.py --agree-anchors {genetic,neural,
-neural-genetic}` swaps the AGREE exemplar's *domain* (molecular genetic 1-shot baseline vs neural
-1-shot vs neural+genetic 2-shot) to test whether the molecular anchor biases the judge toward
-marking molecular passages met. Variants carry distinct judge tags (`@neural-1shot`,
+**AGREE-anchor ablation (done — negative result).** `judge_pilot.py --agree-anchors {genetic,
+neural,neural-genetic}` swaps the AGREE exemplar's *domain* (molecular genetic 1-shot baseline vs
+neural 1-shot vs neural+genetic 2-shot) to test whether the molecular anchor biases the judge
+toward marking molecular passages met. Variants carry distinct judge tags (`@neural-1shot`,
 `@neural-genetic-2shot`) so they coexist with the baseline (`AGREE_ANCHOR_VARIANTS`, tests in
-`test_judge_pilot.py`). Result → `@test_runs.md` when complete.
+`test_judge_pilot.py`). **Result (`@test_runs.md` Run 8, paid DeepSeek, 60-paper neuro set): the
+anchor domain does not bias the judge** — swapping it moves ≤14% of keys at noise-level effect
+sizes (≤0.033 on −1…+1); the verdicts are robust to the exemplar's domain. Confirms label quality,
+doesn't threaten it.
 
 ### 9.1 Domain-general criteria — molecular-bias fix
 The molecular-specific `CRITERIA_DEFS` mechanically rejected every non-molecular paper
