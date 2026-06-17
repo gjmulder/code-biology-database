@@ -288,12 +288,12 @@ _TEMPLATE = """<!DOCTYPE html>
 <div class="controls">
   <span><label>Rank by</label>
     <span class="seg" id="source">
-      <button data-v="pages" class="on">similarity to genetic code</button><button data-v="verdicts">LLM verdicts</button>
+      <button data-v="pages">similarity to genetic code</button><button data-v="verdicts" class="on">LLM verdicts</button>
     </span>
   </span>
   <span><label>Metric</label>
     <span class="seg" id="metric">
-      <button data-v="mean">mean</button><button data-v="median" class="on">median</button><button data-v="min">min (weakest)</button>
+      <button data-v="mean">mean</button><button data-v="median">median</button><button data-v="min" class="on">min (weakest)</button>
     </span>
   </span>
   <input type="search" id="filter" placeholder="filter code / citation…">
@@ -327,7 +327,7 @@ const PAPERS = {data};
 const CRITERIA = {criteria};
 const ORD = {{not_met:0.0, unclear:0.5, met:1.0}};
 
-let source = "pages", metric = "median";
+let source = "verdicts", metric = "min";
 let sortKey = "rank", sortAsc = false;
 
 function critVals(p) {{

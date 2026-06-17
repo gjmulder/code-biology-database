@@ -205,6 +205,18 @@ def test_build_html_is_self_contained_with_inlined_data(tmp_path):
     assert "topicsHTML(p)" in html
 
 
+def test_default_axis_is_verdicts_and_metric_is_min(tmp_path):
+    html = mr.build_html(_sample_papers(tmp_path))
+    # JS state defaults
+    assert 'let source = "verdicts", metric = "min";' in html
+    # the segmented controls mark the matching buttons active ("on")
+    assert '<button data-v="verdicts" class="on">LLM verdicts</button>' in html
+    assert 'data-v="min" class="on"' in html
+    # the previous defaults are no longer pre-selected
+    assert '<button data-v="pages" class="on">' not in html
+    assert '<button data-v="median" class="on">' not in html
+
+
 def test_main_writes_html_file_from_db(tmp_path, monkeypatch):
     score_rows = [(62, "pdfs/10.1234_x.pdf", c, 0.05) for c in mr.CRITERIA]
     verdict_rows = [("pdfs/10.1234_x.pdf", "two_worlds", "met", 1.0, 0.95)]
