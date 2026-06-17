@@ -205,6 +205,9 @@ def main(argv=None):
     ap.add_argument("--snapshot", help="dump current verdicts for pilot papers, then exit")
     ap.add_argument("--old", help="snapshot JSON for the OLD categorical distribution")
     ap.add_argument("--out", help="write the report here as well as stdout")
+    ap.add_argument("--judge", default=None,
+                    help="scope verdicts/chunk_verdicts to one judge model "
+                         "(e.g. deepseek/deepseek-v4-pro); default = newest judge per key")
     args = ap.parse_args(argv)
 
     conn = db.connect()
@@ -218,11 +221,11 @@ def main(argv=None):
             _snapshot(conn, pids, args.snapshot)
             return
 
-        payload = db.fetch_report(conn, args.run)
+        payload = db.fetch_report(conn, args.run, judge=args.judge)
         papers, order = payload["papers"], payload["order"]
         order = [pid for pid in order if pid in pids]
 
-        agg = aggregate_chunk_verdicts(db.fetch_chunk_verdicts(conn))
+        agg = aggregate_chunk_verdicts(db.fetch_chunk_verdicts(conn, judge=args.judge))
         for pid in order:
             p = papers[pid]
             p["graded"] = {}

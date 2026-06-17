@@ -260,10 +260,12 @@ def _fmt(x):
     return "" if x is None else f"{x:+.3f}"
 
 
-def report_from_db(conn, md_path, csv_path, run="baseline"):
+def report_from_db(conn, md_path, csv_path, run="baseline", judge=None):
     """Generate report.md + a flat CSV entirely from the MySQL tables, for one
-    embedding ``run`` (baseline=harrier, gte-qwen2=the model swap)."""
-    payload = db.fetch_report(conn, run)
+    embedding ``run`` (baseline=harrier, gte-qwen2=the model swap). ``judge``
+    optionally scopes the verdict columns to one judge model (e.g.
+    ``deepseek/deepseek-v4-pro``); ``None`` keeps the newest-judge-wins default."""
+    payload = db.fetch_report(conn, run, judge=judge)
     papers, order = payload["papers"], payload["order"]
     meta = payload["meta"]
     methods = [m for m in METHODS
@@ -433,10 +435,10 @@ def report_from_db(conn, md_path, csv_path, run="baseline"):
     print(f"\nwrote {md_path} and {csv_path} ({len(order)} papers) from MySQL")
 
 
-def recompute_from_db(conn, md_path, csv_path, k, strength, run="baseline"):
+def recompute_from_db(conn, md_path, csv_path, k, strength, run="baseline", judge=None):
     """Offline rescore (no GPU): load persisted vectors, apply all four levers, write the
     leverred ``e`` + centred pole widths back to MySQL, regenerate the report — all scoped
-    to one embedding ``run``."""
+    to one embedding ``run``. ``judge`` optionally scopes the verdict columns."""
     db.init_schema(conn)
     doc_vecs, poles, codes = db.fetch_vectors(conn, run)
     if not doc_vecs or not poles:
@@ -473,7 +475,7 @@ def recompute_from_db(conn, md_path, csv_path, k, strength, run="baseline"):
     log.info("recomputed %d papers x %d methods (k=%d, strength=%.2f) from vectors; "
              "no GPU. within=%s", len(scores), n_methods, k, strength,
              {c: round(v, 3) for c, v in within.items()})
-    report_from_db(conn, md_path, csv_path, run)
+    report_from_db(conn, md_path, csv_path, run, judge=judge)
 
 
 def main():
@@ -534,13 +536,17 @@ def main():
                     help="how strongly each criterion axis is orthogonalized against the "
                          "shared register direction, in [0,1]; 1.0 over-corrected on the "
                          "smoke test, so the default is partial")
+    ap.add_argument("--judge", default=None,
+                    help="scope the report's verdict columns to one judge model "
+                         "(e.g. deepseek/deepseek-v4-pro or gemma-4-31b); default reads "
+                         "the newest judge per key (last-wins)")
     args = ap.parse_args()
 
     if args.recompute:
         conn = db.connect()
         try:
             recompute_from_db(conn, args.md, args.csv, args.whiten_k, args.shared_strength,
-                              run=args.run)
+                              run=args.run, judge=args.judge)
         finally:
             conn.close()
         return
@@ -566,7 +572,7 @@ def main():
                      len(out.get("control_vectors", {})))
             # now rescore the controls through the corpus geometry + regenerate the report
             recompute_from_db(conn, args.md, args.csv, args.whiten_k, args.shared_strength,
-                              run=args.run)
+                              run=args.run, judge=args.judge)
         finally:
             conn.close()
         os.remove(out_tmp)
@@ -575,7 +581,7 @@ def main():
     if args.report_only:
         conn = db.connect()
         try:
-            report_from_db(conn, args.md, args.csv, run=args.run)
+            report_from_db(conn, args.md, args.csv, run=args.run, judge=args.judge)
         finally:
             conn.close()
         return
@@ -611,7 +617,7 @@ def main():
         db.store(conn, out, recs, run_ts, run=args.run)
         log.info("stored %d papers x %d methods to MySQL (run=%s)",
                  len(out["scores"]), len(out.get("methods", METHODS)), args.run)
-        report_from_db(conn, args.md, args.csv, run=args.run)
+        report_from_db(conn, args.md, args.csv, run=args.run, judge=args.judge)
     finally:
         conn.close()
     os.remove(out_tmp)   # MySQL is the store, not JSON

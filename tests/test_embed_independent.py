@@ -203,7 +203,7 @@ def test_report_from_db_threads_run_to_fetch_report(monkeypatch):
     # reports gte vectors (not baseline). Capture the run passed to db.fetch_report.
     seen = {}
 
-    def fake_fetch_report(conn, run="baseline"):
+    def fake_fetch_report(conn, run="baseline", judge=None):
         seen["run"] = run
         return {"papers": {}, "order": [], "meta": {},
                 "pole_separation": {}, "controls": {}}
@@ -211,6 +211,22 @@ def test_report_from_db_threads_run_to_fetch_report(monkeypatch):
     monkeypatch.setattr(ei.db, "fetch_report", fake_fetch_report)
     ei.report_from_db(None, "/dev/null", "/dev/null", run="gte-qwen2")
     assert seen["run"] == "gte-qwen2"
+
+
+def test_report_from_db_threads_judge_to_fetch_report(monkeypatch):
+    # report_from_db must pass --judge through to db.fetch_report so a report can be
+    # scoped to one judge's verdicts (gemma vs deepseek) instead of newest-wins.
+    seen = {}
+
+    def fake_fetch_report(conn, run="baseline", judge=None):
+        seen["judge"] = judge
+        return {"papers": {}, "order": [], "meta": {},
+                "pole_separation": {}, "controls": {}}
+
+    monkeypatch.setattr(ei.db, "fetch_report", fake_fetch_report)
+    ei.report_from_db(None, "/dev/null", "/dev/null", run="baseline",
+                      judge="deepseek/deepseek-v4-pro")
+    assert seen["judge"] == "deepseek/deepseek-v4-pro"
 
 
 def test_recompute_from_db_threads_run_through(monkeypatch):
