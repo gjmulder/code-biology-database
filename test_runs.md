@@ -184,26 +184,94 @@ any corpus-wide or paid (DeepSeek V4 Pro) all-criteria run.
 
 ---
 
-## Run 6 — molecular "met"-tail pilot, rest of corpus (2026-06-16, IN PROGRESS)
+## Run 6 — molecular "met"-tail pilot, rest of corpus (2026-06-17, COMPLETE)
 
 Acting on the Run 5 backlog: the graded domain-general judge over the **117 papers OUTSIDE the
 neuro top-4** — the complement of Runs 4–5, i.e. every paper whose dominant topic is *not* in
 `[11, 18, 19, 13]`. This is the molecular "met" tail where both axes should carry real signal
 (Run 2's pooled ρ was driven by these codes), so it is the first chance to compare `e` against
-the new judge where the verdict actually varies.
+the new judge where the verdict actually varies. **With this run the entire 219-paper corpus
+now carries domain-general verdicts** (102 neuro from Run 5's `pilot_verdicts_domaingen.jsonl`
++ 117 rest from this run's `pilot_verdicts_rest.jsonl`), so the combined analysis below is the
+first corpus-wide read of the new judge.
 
 - **Driver:** `judge_pilot.py --rest --top 4 --tokenizer harrier_tokenizer --checkpoint
-  pilot_verdicts_rest.jsonl --workers 3` (the `--rest` selector added this session = the
-  complement of `select_pilot_papers`; tests in `tests/test_judge_pilot.py`). Free local Gemma
-  on `start_llama_pilot.sh` (`@environment_notes.md`); prod voice agent offline for the run.
-- **Selection confirmed:** 219 total / 102 neuro top-4 (Runs 4–5) / **117 rest** / 0 no-topic;
-  all 117 PDFs on disk. The end-of-run persist is restricted to these 117 `pids`, so the 102
-  neuro rows already in `verdicts`/`chunk_verdicts` are untouched.
-- **Status: launched overnight, judging in progress** (resumable per `(pdf_path, chunk_idx,
-  criterion)` triple; per-paper failure isolated — e.g. a chunk with malformed model JSON is
-  logged + skipped, never checkpointed). Results, categorical/graded distributions, and the
-  corpus-wide ρ(e, verdict) over all 219 to be filled in here once it completes and persists.
+  pilot_verdicts_rest.jsonl --workers 3` (the `--rest` selector = the complement of
+  `select_pilot_papers`; tests in `tests/test_judge_pilot.py`). Free local Gemma on
+  `start_llama_pilot.sh`; prod voice agent offline for the run.
+- **Clean finish.** All **117/117** papers judged (`pilot_verdicts_rest.jsonl` = 1656 chunk
+  cells over 117 unique `pdf_path`); persist line landed: **1656 `chunk_verdicts` + 351
+  `verdicts`** (117×3), restricted to the 117 `pids` so the 102 neuro rows are untouched. Exactly
+  **1** chunk cell skipped to malformed model JSON (`10.4238_3x4qm566.pdf` chunk 0 adaptors),
+  isolated per-cell and never checkpointed — the per-paper failure isolation worked as designed.
 
-**Pending on completion:** verify clean finish (`pilot_verdicts_rest.jsonl` covers 117 papers,
-the persist line landed), then re-run corpus-wide ρ(e, verdict) on all 219 and regenerate
-`ranking_report.html` so every paper carries a domain-general verdict.
+### Run-6 rest tail only (117 papers)
+Categorical (`unclear` = 0 throughout, as in Runs 4–5):
+
+| criterion | met | not_met | graded mean / std |
+|---|---|---|---|
+| two_worlds    | 8  | 109 | +0.030 / 0.247 |
+| adaptors      | 43 | 74  | +0.282 / 0.400 |
+| arbitrariness | 4  | 113 | +0.004 / 0.139 |
+
+**Gradation materialised on the molecular tail — Run 6's gate criterion is met.** `adaptors`
+spreads hard (20×`+0.5`, 23×`+1.0`, std 0.40); `two_worlds` carries real levels too
+(±1.0 present, std 0.25). `arbitrariness` stays thin (4 met) — the subtlest criterion, as always.
+
+### Combined corpus (all 219, domain-general)
+Categorical:
+
+| criterion | met | not_met | graded mean / std |
+|---|---|---|---|
+| two_worlds    | 16 | 203 | +0.043 / 0.232 |
+| adaptors      | 84 | 135 | +0.269 / 0.389 |
+| arbitrariness | 7  | 212 | +0.011 / 0.130 |
+
+Pooled ρ(e, verdict) over all 219 — **chunk axis, categorical / graded**, vs Run 2's molecular
+chunk ρ for reference:
+
+| criterion | Run 2 chunk (molecular judge) | Run 6 ALL-219 cat / grad |
+|---|---|---|
+| two_worlds    | +0.409 | +0.061 / −0.015 |
+| adaptors      | +0.310 | +0.078 / +0.139 |
+| arbitrariness | +0.149 | +0.136 / +0.188 |
+
+**Read — the corpus-wide ρ collapse is an axis-mismatch artefact, not signal loss.** The
+domain-general judge spreads "met" roughly *evenly* across both strata (two_worlds 8 neuro / 8
+molecular; adaptors 41 / 43; arbitrariness 3 / 4), but `e` is corpus-contrastive against
+**molecular** prototype poles, so it is blind to the non-molecular "codes" the new judge now
+recognises in the neuro strata (§9.1, Major 2025 mediator generalization). The two axes have
+**diverged by design**: the judge went cross-domain, the embedding stayed molecular. The
+per-stratum ρ proves it:
+
+| criterion | molecular rest (117) cat / grad | neuro top-4 (102) cat / grad |
+|---|---|---|
+| two_worlds    | +0.137 / −0.004 | +0.005 / +0.009 |
+| adaptors      | **+0.262 / +0.307** | **−0.140 / −0.087** |
+| arbitrariness | **+0.185 / +0.252** | +0.031 / +0.033 |
+
+- **Within the molecular tail — the only stratum where both axes measure the same thing — the
+  agreement holds.** `adaptors` recovers Run 2's signal (+0.262 cat, **+0.307 graded** ≈ Run 2's
+  +0.310), and `arbitrariness` *improves* on Run 2 (+0.149 → +0.185 cat / **+0.252 graded**) —
+  the graded axis tracks `e` better than the categorical there, the first place gradation pays
+  off. `two_worlds` is the exception (Run 2 +0.409 → +0.137 cat, graded ~0): the molecular
+  two-world signal `e` keyed on is no longer what the broadened judge rewards.
+- **Within the neuro stratum `e` is flat or reversed** (adaptors −0.140): the 41 neuro
+  `adaptors`-met papers sit at low/average `e`, so pooling them with the molecular tail drags the
+  all-219 ρ to ≈0. This is the dilution, not a regression.
+
+**Implication.** ρ(e, domain-general verdict) is **no longer a clean corpus-wide validation
+signal** — the molecular embedding poles and the cross-domain judge are measuring different
+constructs (CLAUDE.md §1: the two axes are independent and reported side-by-side, neither
+authoritative; this run is a concrete instance of them legitimately diverging). To compare them
+apples-to-apples either (a) restrict the e-vs-judge ρ to the molecular tail (where it holds), or
+(b) build domain-general prototype poles to match the broadened judge, or (c) accept the
+divergence and report both axes side-by-side as designed. Embedding-side work is still judged
+exhausted (§8); option (b) is the only embedding lever that would re-couple the axes, and is
+untested.
+
+**Next (backlog):** the gate is cleared (gradation confirmed on the molecular tail), but the
+corpus-wide paid (DeepSeek V4 Pro) all-criteria run should be decided against the gold-set plan
+(MEMORY: gold-set is the live next step), **not** against ρ(e, verdict) — which this run shows no
+longer adjudicates the domain-general judge corpus-wide. `ranking_report.html` regeneration still
+pending.

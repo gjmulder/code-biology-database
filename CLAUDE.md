@@ -307,9 +307,16 @@ design — the grounding gate held (every positive quote-grounded), the judge is
 than the old one, and gradation moved onto `agreement`. It also exposed the molecular-bias
 prompt bug fixed in §9.1. Pilot results: `@test_runs.md` Runs 4–5. The molecular "met"-tail
 pilot that backlog called for — the 117 papers *outside* the neuro top-4 (`judge_pilot.py
---rest --top 4`, free local Gemma) — is **running** (checkpoint `pilot_verdicts_rest.jsonl`);
-results land in `@test_runs.md` Run 6. Before any corpus-wide or paid (DeepSeek V4 Pro)
-all-criteria run, confirm rich gradation materialises on that tail.
+--rest --top 4`, free local Gemma) — **completed 2026-06-17** (`@test_runs.md` Run 6), so the
+**whole 219-paper corpus now carries domain-general verdicts**. Gradation materialised on the
+molecular tail (the gate criterion: `adaptors` graded std 0.40, real ±1.0 levels), but the run
+exposed a key finding: **corpus-wide ρ(e, verdict) collapsed** (Run 2 chunk two_worlds +0.409 →
++0.061) because the domain-general judge marks non-molecular "codes" met across the neuro strata
+while `e` keys on **molecular** prototype poles — the two axes diverged *by design* (§1). Within
+the molecular tail, where both axes measure the same thing, the agreement holds (`adaptors`
+graded ρ +0.307 ≈ Run 2's +0.310; `arbitrariness` improves to +0.252). **Consequence: ρ(e,
+verdict) no longer adjudicates the domain-general judge corpus-wide** — gate the next corpus-wide
+/ paid (DeepSeek V4 Pro) all-criteria run against the gold-set plan, not against ρ.
 
 ### 9.1 Domain-general criteria (2026-06-16) — molecular-bias fix
 The molecular-specific `CRITERIA_DEFS` mechanically rejected every non-molecular paper
