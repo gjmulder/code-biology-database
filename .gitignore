@@ -244,3 +244,7 @@ harrier_tokenizer/
 
 # Pre-redesign verdict baseline snapshots (inputs to compare_verdicts.py)
 old_*.json
+
+# Archive of stale/transient artifacts from prior runs (snapshots, duplicate HF
+# tokenizer copies, retired checkpoints). Not source; MySQL is the system of record.
+json/
