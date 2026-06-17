@@ -41,6 +41,18 @@ logger = logging.getLogger(__name__)
 DEFAULT_TOP = 4
 DEFAULT_CHECKPOINT = "pilot_verdicts.jsonl"
 DEEPSEEK_CHECKPOINT = "deepseek_verdicts.jsonl"
+
+# AGREE-anchor ablation (CLAUDE.md §6 follow-up): each variant selects which `_controls`
+# entries fill the AGREE anchor + a model-tag/checkpoint suffix so its verdicts coexist with
+# the molecular baseline instead of overwriting it. `genetic` is the existing baseline (no
+# suffix); `neural` swaps in the non-molecular 1-shot exemplar; `neural-genetic` shows both
+# (2-shot). Maps name -> (agree_keys, tag_suffix).
+AGREE_ANCHOR_VARIANTS = {
+    "genetic": (("genetic_code_positive",), ""),
+    "neural": (("neural_code_positive",), "@neural-1shot"),
+    "neural-genetic": (("neural_code_positive", "genetic_code_positive"),
+                       "@neural-genetic-2shot"),
+}
 DEFAULT_TOKENIZER = "/data/vllm/harrier-oss-v1-27b"
 AUGMENTED_CSV = "code-categories-augmented.csv"
 PROTOTYPES_JSON = "prototypes.json"
@@ -222,13 +234,15 @@ def aggregate_to_verdict_records(chunk_records):
 # --- per-paper judging (I/O; exercised manually) ---------------------------
 
 def judge_paper_chunks(paper_meta, full_text, tokenizer, topic_label, topic_blurb,
-                       controls, complete, checkpoint_path, done, write_lock):
+                       controls, complete, checkpoint_path, done, write_lock,
+                       agree_keys=("genetic_code_positive",)):
     """Judge every (chunk × criterion) cell of one paper not already in ``done``.
 
     Reproduces the embedding windows, builds the calibrated per-chunk prompt, calls Gemma,
     parses + grounds, and checkpoints each cell (under ``write_lock``) before returning. The
     grounding gate neutralises ungrounded positives; a per-cell model/parse failure is logged
-    and skipped so one bad chunk never aborts the paper. Returns the records judged here."""
+    and skipped so one bad chunk never aborts the paper. ``agree_keys`` selects the AGREE-anchor
+    exemplar(s) (anchor ablation). Returns the records judged here."""
     chunks = chunk_text.reproduce_chunks(full_text, tokenizer)
     records = []
     for idx, ctext in chunks:
@@ -238,7 +252,8 @@ def judge_paper_chunks(paper_meta, full_text, tokenizer, topic_label, topic_blur
             try:
                 raw = complete(cj.GRADED_SYSTEM_PROMPT,
                                cj.build_chunk_prompt(ctext, crit, topic_label,
-                                                     topic_blurb, controls),
+                                                     topic_blurb, controls,
+                                                     agree_keys=agree_keys),
                                response_format={"type": "json_object"})
                 parsed = cj.graded_grounding_gate(cj.parse_graded(raw, crit), ctext)
             except Exception as exc:  # one bad cell must not kill the paper
@@ -275,6 +290,11 @@ def main():
                     help="judge backend: free local Gemma, or OpenRouter DeepSeek V4 Pro")
     ap.add_argument("--reasoning", default="high",
                     help="DeepSeek reasoning effort (high|medium|low); ignored for local")
+    ap.add_argument("--agree-anchors", choices=tuple(AGREE_ANCHOR_VARIANTS), default="genetic",
+                    help="AGREE-anchor ablation: 'genetic' (molecular baseline), 'neural' "
+                         "(non-molecular 1-shot), or 'neural-genetic' (2-shot). Non-baseline "
+                         "variants are tagged + checkpointed separately so they coexist with "
+                         "the baseline corpus")
     ap.add_argument("--checkpoint", default=None,
                     help="checkpoint JSONL (default: per-judge — pilot_verdicts / deepseek_verdicts)")
     ap.add_argument("--no-persist", action="store_true",
@@ -289,8 +309,18 @@ def main():
 
     load_env()  # OPENROUTER_API_KEY for the paid DeepSeek judge; no-op without .env
 
-    checkpoint = args.checkpoint or (
-        DEEPSEEK_CHECKPOINT if args.judge == "deepseek" else DEFAULT_CHECKPOINT)
+    agree_keys, tag_suffix = AGREE_ANCHOR_VARIANTS[args.agree_anchors]
+
+    base_checkpoint = DEEPSEEK_CHECKPOINT if args.judge == "deepseek" else DEFAULT_CHECKPOINT
+    if args.checkpoint:
+        checkpoint = args.checkpoint
+    elif tag_suffix:
+        # a non-baseline variant must NOT share the baseline checkpoint or it would resume
+        # off baseline cells; give it its own file (slug from the tag suffix).
+        root, ext = os.path.splitext(base_checkpoint)
+        checkpoint = f"{root}_{tag_suffix.lstrip('@')}{ext}"
+    else:
+        checkpoint = base_checkpoint
 
     topics = load_augmented_topics()
     controls = json.load(open(PROTOTYPES_JSON, encoding="utf-8"))["_controls"]
@@ -300,7 +330,9 @@ def main():
     meter = cj.UsageMeter() if args.judge == "deepseek" else None
     complete, model_tag = make_judge(args.judge, host=args.host,
                                      reasoning=args.reasoning, meter=meter)
-    logger.info("judge=%s model=%s checkpoint=%s%s", args.judge, model_tag, checkpoint,
+    model_tag += tag_suffix  # anchor-ablation variants coexist under a distinct judge tag
+    logger.info("judge=%s model=%s agree_anchors=%s checkpoint=%s%s",
+                args.judge, model_tag, args.agree_anchors, checkpoint,
                 " [no-persist]" if args.no_persist else "")
 
     # Initial reads (topic assignments + codes) on a short-lived connection. We do NOT hold
@@ -331,7 +363,8 @@ def main():
         full_text = pdf_text.extract_text(pid)
         meta = _paper_meta_from_codes(pid, codes)
         return judge_paper_chunks(meta, full_text, tokenizer, label, blurb,
-                                  controls, complete, checkpoint, done, write_lock)
+                                  controls, complete, checkpoint, done, write_lock,
+                                  agree_keys=agree_keys)
 
     # No DB connection is held during judging — all output goes to the JSONL checkpoint
     # (the system of record), so a drop here costs nothing and persistence reads it back.

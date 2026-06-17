@@ -147,6 +147,43 @@ def test_aggregate_to_verdict_records_uses_graded_max_and_derived_categorical():
                       cj.prompt_hash("two_worlds"), "t")
 
 
+# --- AGREE anchor ablation variants ---------------------------------------
+
+def test_agree_anchor_variants_map_keys_and_tags():
+    v = jp.AGREE_ANCHOR_VARIANTS
+    # baseline is the molecular genetic 1-shot, untagged (does not shadow the existing corpus)
+    assert v["genetic"] == (("genetic_code_positive",), "")
+    # non-molecular 1-shot and the 2-shot both carry a distinct tag suffix so they coexist
+    assert v["neural"] == (("neural_code_positive",), "@neural-1shot")
+    assert v["neural-genetic"] == (
+        ("neural_code_positive", "genetic_code_positive"), "@neural-genetic-2shot")
+
+
+def test_judge_paper_chunks_forwards_agree_keys(tmp_path, monkeypatch):
+    import threading
+    monkeypatch.setattr(jp.chunk_text, "reproduce_chunks",
+                        lambda text, tok: [(0, "a passage")])
+    seen = {}
+
+    def fake_build(ctext, crit, label, blurb, controls,
+                   agree_keys=("genetic_code_positive",)):
+        seen["agree_keys"] = agree_keys
+        return "PROMPT"
+    monkeypatch.setattr(jp.cj, "build_chunk_prompt", fake_build)
+
+    def fake_complete(system, user, response_format=None):
+        return json.dumps({"agreement": "neutral", "confidence": "Low",
+                           "evidence_quote": "", "reasoning": "r"})
+
+    ckpt = str(tmp_path / "c.jsonl")
+    jp.judge_paper_chunks({"code_number": 1, "pdf_path": "p.pdf"}, "full text",
+                          tokenizer=None, topic_label="L", topic_blurb="B", controls={},
+                          complete=fake_complete, checkpoint_path=ckpt, done=set(),
+                          write_lock=threading.Lock(),
+                          agree_keys=("neural_code_positive",))
+    assert seen["agree_keys"] == ("neural_code_positive",)
+
+
 # --- judge backend selection (local Gemma vs DeepSeek V4 Pro) --------------
 
 def test_make_judge_local_returns_gemma_tag():

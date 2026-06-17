@@ -80,6 +80,34 @@ def test_build_chunk_prompt_injects_topic_and_controls():
     assert "combinatorial pattern read by effector proteins" in p
 
 
+def test_build_chunk_prompt_configurable_agree_anchors():
+    """The AGREE anchor example(s) are selectable (anchor ablation): 1-shot neural omits the
+    genetic exemplar; 2-shot shows both, and every AGREE example precedes the DISAGREE anchor."""
+    controls = dict(_CONTROLS,
+                    neural_code_positive="stimulus features and spike-train patterns are two "
+                                         "worlds bridged by neural circuitry, a learned convention")
+    common = dict(chunk_text="x", criterion="two_worlds",
+                  topic_label="L", topic_blurb="B", controls=controls)
+
+    # default is unchanged (genetic 1-shot) — backward compatible
+    p_default = cj.build_chunk_prompt(**common)
+    assert controls["genetic_code_positive"] in p_default
+
+    # 1-shot neural: neural example present, genetic absent
+    p_neural = cj.build_chunk_prompt(**common, agree_keys=("neural_code_positive",))
+    assert controls["neural_code_positive"] in p_neural
+    assert controls["genetic_code_positive"] not in p_neural
+
+    # 2-shot neural+genetic: both present, both under AGREE (before the DISAGREE anchor)
+    p_both = cj.build_chunk_prompt(
+        **common, agree_keys=("neural_code_positive", "genetic_code_positive"))
+    assert controls["neural_code_positive"] in p_both
+    assert controls["genetic_code_positive"] in p_both
+    d = p_both.index(cj.ANCHOR_DISAGREE_FRAMING)
+    assert p_both.index(controls["neural_code_positive"]) < d
+    assert p_both.index(controls["genetic_code_positive"]) < d
+
+
 def test_build_chunk_prompt_has_graded_json_schema():
     p = _build("two_worlds")
     for level in ("strongly_disagree", "disagree", "neutral", "agree", "strongly_agree"):

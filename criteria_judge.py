@@ -352,12 +352,18 @@ def _criterion_block(criterion):
     return parts
 
 
-def build_chunk_prompt(chunk_text, criterion, topic_label, topic_blurb, controls):
+def build_chunk_prompt(chunk_text, criterion, topic_label, topic_blurb, controls,
+                       agree_keys=("genetic_code_positive",)):
     """Build the per-chunk, per-criterion graded prompt.
 
     Layers: calibration preamble → topic grounding (dominant-topic label + centroid blurb, as
     CONTEXT only) → AGREE/DISAGREE control anchors → **the passage** → criterion definition →
     strict graded JSON schema. The arbitrariness steelman is injected only for that criterion.
+
+    ``agree_keys`` selects which ``controls`` entries fill the AGREE anchor (the anchor-ablation
+    knob): the default ``("genetic_code_positive",)`` is the molecular 1-shot baseline; a neural
+    key gives a non-molecular 1-shot; two keys give a 2-shot anchor. The DISAGREE anchor and the
+    rest of the scaffold are fixed, so the AGREE example(s) are the only moving part.
 
     PREFIX-CACHING ORDER: everything up to and including the passage is identical across the
     three criteria calls for a given chunk, so it forms a long shared PREFIX an implicit-caching
@@ -366,10 +372,11 @@ def build_chunk_prompt(chunk_text, criterion, topic_label, topic_blurb, controls
     block + schema vary per call, so they are the SUFFIX (see openrouter_graded_factory). The
     prompt-version hash (prompt_template/prompt_hash) is unaffected: it excludes the passage and
     captures scaffold *content*, not this delivery ordering."""
+    agree_examples = "\n".join(f"  {controls[k]}" for k in agree_keys)
     parts = [
         CALIBRATION_PREAMBLE,
         f"Research area (CONTEXT ONLY): {topic_label} — {topic_blurb}",
-        f"{ANCHOR_AGREE_FRAMING}\n  {controls['genetic_code_positive']}",
+        f"{ANCHOR_AGREE_FRAMING}\n{agree_examples}",
         f"{ANCHOR_DISAGREE_FRAMING}\n  {controls['deterministic_chemistry_negative']}",
         f"=== PASSAGE ===\n{chunk_text}",
     ]
