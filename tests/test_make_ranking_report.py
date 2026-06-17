@@ -194,7 +194,7 @@ def test_build_html_is_self_contained_with_inlined_data(tmp_path):
     # the two axes are the chunk embedding ("similarity to genetic code", internal key
     # 'pages') and the "LLM verdicts" (internal key 'verdicts'); metrics kept; the retired
     # full/abstract axes are gone from the selector
-    for token in ('data-v="pages"', 'data-v="verdicts"', "similarity to genetic code",
+    for token in ('data-v="pages"', 'data-v="verdicts"', "code-biology similarity",
                   "LLM verdicts", "mean", "median", "min"):
         assert token in html
     assert 'data-v="full"' not in html

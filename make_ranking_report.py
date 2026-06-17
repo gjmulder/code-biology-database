@@ -279,16 +279,16 @@ _TEMPLATE = """<!DOCTYPE html>
 <header>
   <h1>Code Biology — paper ranking</h1>
   <div class="sub">{n} papers · baseline run · generated {date}. Rank by
-    <b>similarity to genetic code</b> (the per-chunk embedding score <code>e</code>,
-    max-pooled) or the domain-general <b>LLM verdicts</b> (graded judge, {judged} papers
-    judged); the three criteria collapse to one score via the chosen metric. Click any
-    column to sort.</div>
+    <b>code-biology similarity</b> (the per-chunk embedding score <code>e</code> against the
+    domain-general code-biology poles, max-pooled) or the domain-general <b>LLM verdicts</b>
+    (graded judge, {judged} papers judged); the three criteria collapse to one score via the
+    chosen metric. Click any column to sort.</div>
 </header>
 
 <div class="controls">
   <span><label>Rank by</label>
     <span class="seg" id="source">
-      <button data-v="pages">similarity to genetic code</button><button data-v="verdicts" class="on">LLM verdicts</button>
+      <button data-v="pages">code-biology similarity</button><button data-v="verdicts" class="on">LLM verdicts</button>
     </span>
   </span>
   <span><label>Metric</label>
@@ -308,18 +308,22 @@ _TEMPLATE = """<!DOCTYPE html>
 <details>
   <summary>About this report &amp; caveats</summary>
   <p>Two independent axes over the same papers, reported side by side &mdash; neither is
-  ground truth. <b>Similarity to genetic code</b> = the per-chunk (8192-token "page")
+  ground truth. <b>Code-biology similarity</b> = the per-chunk (8192-token "page")
   corpus-contrastive embedding score <code>e</code> per criterion, max-pooled over a
-  paper's chunks (positive = reads, in the embedding space, like the genetic-code
-  archetype for that criterion). <b>LLM verdicts</b> are the domain-general graded
-  judge's <code>met / unclear / not_met</code> per criterion (CLAUDE.md §9/§9.1), each
+  paper's chunks (positive = reads, in the embedding space, like the domain-general
+  code-biology poles &mdash; two independent worlds, a mediator, arbitrary rules &mdash;
+  balanced across genetic, neural, semiotic and signalling instances rather than the
+  genetic code alone; <code>prototypes.json</code> rev&nbsp;2, test_runs.md Run&nbsp;7).
+  <b>LLM verdicts</b> are the domain-general graded judge's
+  <code>met / unclear / not_met</code> per criterion (CLAUDE.md §9/§9.1), each
   <code>met</code> gated by a verbatim quote; papers not yet judged show &ndash;. Hover a
   verdict cell for its graded value and confidence. The verdicts are still
   <i>synthetic</i> labels from a comparatively weak judge, so <b>ranks are more
-  trustworthy than absolute magnitudes</b>. The two axes can legitimately diverge: the
-  embedding keys on the molecular archetype while the judge scores codes across domains
-  (test_runs.md Run 6). The <i>min</i> metric is the weakest-link reading: per Barbieri a
-  biological code requires <i>all three</i> criteria.</p>
+  trustworthy than absolute magnitudes</b>. Both axes are now domain-general yet
+  corpus-wide ρ(e, verdict) stays flat, so they can still legitimately diverge
+  paper-by-paper (test_runs.md Runs&nbsp;6&ndash;7). The <i>min</i> metric is the
+  weakest-link reading: per Barbieri a biological code requires <i>all three</i>
+  criteria.</p>
 </details>
 
 <script>
