@@ -266,7 +266,9 @@ set:
    change. The suite is **253 tests, fully offline** (fake encoder/tokenizer, no GPU/DB needed),
    under **`tests/`** (root `conftest.py` puts the repo root on `sys.path`).
 2. **Language** — pythonic, readable; prefer numpy for data management.
-3. **Logging** — pythonic `logging`, DEBUG/INFO chosen by criticality.
+3. **Logging** — pythonic `logging`, DEBUG/INFO chosen by criticality. Write **all** run
+   logs (background job output, judge/embed driver logs, etc.) to **`./logs/`** (gitignored);
+   keep only the actively-running job's log elsewhere. Don't scatter logs in the repo root.
 4. **Commit cadence** — pause and commit after each completed logical unit; small,
    self-contained commits. 
 5. **Spend safety** — paid (DeepSeek V4 Pro) work checkpoints to `sample_verdicts.jsonl` per paper
