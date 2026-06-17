@@ -174,3 +174,19 @@ def test_make_judge_rejects_unknown():
     import pytest
     with pytest.raises(ValueError):
         jp.make_judge("gpt5")
+
+
+def test_load_env_sets_missing_keys_without_clobbering(tmp_path, monkeypatch):
+    """load_env populates a missing key from .env but never overrides an already-set env var."""
+    env = tmp_path / ".env"
+    env.write_text('OPENROUTER_API_KEY=sk-from-file\nexport FOO="bar"\n')
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("FOO", "already-set")
+    jp.load_env(str(env))
+    assert jp.os.environ["OPENROUTER_API_KEY"] == "sk-from-file"
+    assert jp.os.environ["FOO"] == "already-set"  # setdefault must not clobber
+
+
+def test_load_env_missing_file_is_noop(tmp_path):
+    """A missing .env must not raise — local runs need no secrets file."""
+    jp.load_env(str(tmp_path / "nonexistent.env"))

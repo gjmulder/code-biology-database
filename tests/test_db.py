@@ -282,6 +282,24 @@ def test_chunk_verdict_rows_carries_model():
     assert rows[0] == (1, "p", "adaptors", 0, 1.0, 1.0, "x", "gemma-4-31b", None, "t")
 
 
+def test_verdict_update_rows_carries_model():
+    # the judge model is now part of the verdicts PK, so it must thread through the row
+    # builder (None preserved here; update_verdicts coerces the live default).
+    records = [{"code_number": "9", "pdf_path": "p", "criteria": {
+        "two_worlds": {"verdict": "met", "confidence": 1.0}}}]
+    rows = db.verdict_update_rows(records, run_ts="t", model="deepseek/deepseek-v4-pro")
+    assert rows == [(9, "p", "two_worlds", "met", 1.0, None,
+                     "deepseek/deepseek-v4-pro", None, "t")]
+
+
+def test_verdict_tables_key_on_judge_model():
+    # model is part of the PK of both verdict tables so multiple judges coexist
+    # non-destructively (mirrors the embedding side's `run` column).
+    ddl = "\n".join(db.DDL)
+    assert "PRIMARY KEY (code_number, pdf_path, criterion, model)" in ddl
+    assert "PRIMARY KEY (code_number, pdf_path, criterion, chunk_idx, model)" in ddl
+
+
 def test_verdict_update_rows_carries_prompt_hash():
     # the graded path stamps the criterion's prompt-version hash onto each verdict
     records = [{"code_number": "9", "pdf_path": "p", "criteria": {

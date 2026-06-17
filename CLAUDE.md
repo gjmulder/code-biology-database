@@ -173,12 +173,19 @@ adds the column + rebuilds PKs on the existing DB. Tables:
 - **`embedding_scores`** — one row per `(run, code_number, pdf_path, method, criterion)` with
   `e`, `model` (the *embedding* model), `run_ts`. **Verdict/confidence are no longer here.**
   `--recompute` upserts `e` only.
-- **`verdicts`** — **run-agnostic** normalised table, one row per `(code_number, pdf_path,
-  criterion)` with `verdict`, `confidence`, `graded`, `model` (the *judge* model),
-  `prompt_hash`, `run_ts`. The LLM judge is independent of the embedding model, so verdicts are
-  judged once and shared by every run via a JOIN on `(code_number, pdf_path, criterion)`;
-  `update_verdicts` upserts here. `chunk_verdicts` (per-chunk graded diagnostics) likewise
-  carries `model` + `prompt_hash`.
+- **`verdicts`** — normalised table, **embedding-run-agnostic but judge-keyed (2026-06-17)**:
+  one row per `(code_number, pdf_path, criterion, model)` where `model` (the *judge* model,
+  `NOT NULL DEFAULT 'unknown'`) is the **trailing PK column** — the verdict analogue of the
+  embedding side's `run`, so multiple judges coexist non-destructively (the domain-general
+  **`gemma-4-31b`** corpus + a **`deepseek/deepseek-v4-pro`** re-judge side by side) instead of
+  the newer judge overwriting the older at the same key. Other columns: `verdict`, `confidence`,
+  `graded`, `prompt_hash`, `run_ts`. The labels stay shared across *embedding* runs (judged once
+  per judge, JOINed on `(code_number, pdf_path, criterion)`); `update_verdicts(…, model=)` upserts
+  here. `migrate_runs` back-filled the pre-versioning NULL judge tag to `gemma-4-31b` (Run 6
+  corpus) before widening the PK. `chunk_verdicts` is likewise judge-keyed (PK
+  `…, chunk_idx, model`) and carries `model` + `prompt_hash`. Report reads (`fetch_report`,
+  `fetch_chunk_verdicts`) take an optional `judge=` filter; unfiltered, the newest judge wins per
+  key (`ORDER BY run_ts` last-wins).
 - **`prompt_registry`** (`prompt_hash` PK, `criterion`, `prompt_text`, `run_ts`) — the
   **prompt provenance** layer (2026-06-16): `prompt_hash = criteria_judge.prompt_hash(criterion)`
   is a sha256 over the version-bearing prompt scaffold (system prompt + calibration preamble +

@@ -48,8 +48,10 @@ DDL = [
         PRIMARY KEY (run, code_number, pdf_path, method, criterion)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
-    # Run-agnostic LLM verdicts (the shared ground-truth axis): one row per
-    # (paper, criterion), independent of the embedding run. ``model`` is the JUDGE model.
+    # Run-agnostic (across embedding runs) LLM verdicts, but **judge-keyed**: ``model`` (the
+    # JUDGE model) is the trailing PK column so multiple judges coexist non-destructively
+    # (mirrors the embedding side's ``run`` column) — e.g. the domain-general Gemma corpus
+    # and a DeepSeek V4 Pro re-judge sit side by side. One row per (paper, criterion, judge).
     """
     CREATE TABLE IF NOT EXISTS verdicts (
         code_number INT          NOT NULL,
@@ -59,12 +61,12 @@ DDL = [
         confidence  DOUBLE,
         graded      DOUBLE,                  -- graded_max (graded judge axis); NULL for the
                                              -- old categorical path
-        model       VARCHAR(128),
+        model       VARCHAR(128) NOT NULL DEFAULT 'unknown',  -- JUDGE model (PK component)
         prompt_hash VARCHAR(64),             -- prompt version (criteria_judge.prompt_hash);
                                              -- FK into prompt_registry, distinguishes e.g. the
                                              -- molecular vs domain-general criterion prompts
         run_ts      DATETIME,
-        PRIMARY KEY (code_number, pdf_path, criterion)
+        PRIMARY KEY (code_number, pdf_path, criterion, model)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
     # Run-agnostic per-chunk graded judge output (diagnostics + a future chunk-level join to
@@ -80,10 +82,10 @@ DDL = [
         agreement      DOUBLE,
         confidence     DOUBLE,
         evidence_quote TEXT,
-        model          VARCHAR(128),
+        model          VARCHAR(128) NOT NULL DEFAULT 'unknown',  -- JUDGE model (PK component)
         prompt_hash    VARCHAR(64),          -- prompt version (criteria_judge.prompt_hash)
         run_ts         DATETIME,
-        PRIMARY KEY (code_number, pdf_path, criterion, chunk_idx)
+        PRIMARY KEY (code_number, pdf_path, criterion, chunk_idx, model)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
     # Self-describing registry of judge prompt versions: the full canonical template text of
@@ -281,11 +283,25 @@ _OLD_PKS = {
 }
 
 
+# The pre-versioning ``verdicts`` corpus carried no judge tag (``update_verdicts`` never
+# passed one → ``model`` NULL); per @test_runs.md Run 6 it is the domain-general Gemma
+# judge, so the migration back-fills NULLs to this before ``model`` joins the PK.
+BACKFILL_JUDGE_MODEL = "gemma-4-31b"
+
+
 def _has_column(c, table, column):
     c.execute("SELECT 1 FROM information_schema.columns "
               "WHERE table_schema=DATABASE() AND table_name=%s AND column_name=%s",
               (table, column))
     return c.fetchone() is not None
+
+
+def _pk_columns(c, table):
+    """Ordered column names of ``table``'s PRIMARY KEY (empty if none)."""
+    c.execute("SELECT column_name FROM information_schema.key_column_usage "
+              "WHERE table_schema=DATABASE() AND table_name=%s "
+              "AND constraint_name='PRIMARY' ORDER BY ordinal_position", (table,))
+    return [r[0] for r in c.fetchall()]
 
 
 def migrate_runs(conn):
@@ -329,6 +345,21 @@ def migrate_runs(conn):
         if not _has_column(c, "chunk_verdicts", "prompt_hash"):
             c.execute("ALTER TABLE chunk_verdicts "
                       "ADD COLUMN prompt_hash VARCHAR(64) AFTER model")
+        # Judge-versioning: promote the JUDGE ``model`` into the PK of both verdict tables so
+        # multiple judges coexist (guarded on the PK already containing ``model``). PK columns
+        # must be NOT NULL, so back-fill the legacy NULL/blank judge tag to the Gemma corpus
+        # first, then widen the PK. Idempotent: a second run sees ``model`` in the PK → no-op.
+        for table, new_pk in (
+            ("verdicts", "code_number, pdf_path, criterion, model"),
+            ("chunk_verdicts", "code_number, pdf_path, criterion, chunk_idx, model"),
+        ):
+            if "model" in _pk_columns(c, table):
+                continue
+            c.execute(f"UPDATE {table} SET model=%s WHERE model IS NULL OR model=''",
+                      (BACKFILL_JUDGE_MODEL,))
+            c.execute(f"ALTER TABLE {table} "
+                      "MODIFY COLUMN model VARCHAR(128) NOT NULL DEFAULT 'unknown'")
+            c.execute(f"ALTER TABLE {table} DROP PRIMARY KEY, ADD PRIMARY KEY ({new_pk})")
     conn.commit()
 
 
@@ -486,16 +517,18 @@ def prompt_registry_rows(entries, run_ts=None):
             for e in entries]
 
 
-def update_verdicts(conn, records):
-    """Upsert the LLM verdicts into the run-agnostic ``verdicts`` table.
+def update_verdicts(conn, records, model=None):
+    """Upsert the LLM verdicts into the judge-keyed ``verdicts`` table.
 
-    Returns the number of (paper, criterion) verdicts written. Run-agnostic: every
-    embedding run shares these labels via a join on (code_number, pdf_path, criterion),
-    so judging is never repeated per embedding model."""
+    Returns the number of (paper, criterion) verdicts written. ``model`` is the JUDGE model
+    and is part of the PK, so distinct judges (e.g. Gemma vs DeepSeek V4 Pro) coexist rather
+    than overwrite. A missing tag is coerced to ``'unknown'`` (the column is NOT NULL). The
+    labels remain shared across embedding runs via a join on (code_number, pdf_path,
+    criterion[, model]), so judging is never repeated per *embedding* model."""
     import datetime
     init_schema(conn)
     run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    rows = verdict_update_rows(records, run_ts=run_ts)
+    rows = verdict_update_rows(records, run_ts=run_ts, model=model or "unknown")
     with conn.cursor() as c:
         c.executemany(
             "INSERT INTO verdicts "
@@ -513,11 +546,12 @@ def update_verdicts(conn, records):
 def store_chunk_verdicts(conn, records, model=None):
     """Upsert per-chunk graded judgements into the run-agnostic ``chunk_verdicts`` table.
 
-    Returns the number of (paper, criterion, chunk) rows written."""
+    Returns the number of (paper, criterion, chunk) rows written. ``model`` (the JUDGE
+    model) is part of the PK; a missing tag is coerced to ``'unknown'`` (NOT NULL column)."""
     import datetime
     init_schema(conn)
     run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    rows = chunk_verdict_rows(records, run_ts=run_ts, model=model)
+    rows = chunk_verdict_rows(records, run_ts=run_ts, model=model or "unknown")
     with conn.cursor() as c:
         c.executemany(
             "INSERT INTO chunk_verdicts "
@@ -552,12 +586,21 @@ def register_prompts(conn, entries):
     return len(rows)
 
 
-def fetch_chunk_verdicts(conn):
+def fetch_chunk_verdicts(conn, judge=None):
     """Load per-chunk graded judgements → ``{(pdf_path, criterion): [(chunk_idx, agreement,
-    confidence, evidence_quote), ...]}`` ordered by ``chunk_idx`` (empty if none)."""
+    confidence, evidence_quote), ...]}`` ordered by ``chunk_idx`` (empty if none).
+
+    ``model`` is now part of the PK, so pass ``judge`` to read a single judge's chunks;
+    without it every judge's chunks are mixed (correct only while one judge is present)."""
+    sql = ("SELECT pdf_path,criterion,chunk_idx,agreement,confidence,evidence_quote "
+           "FROM chunk_verdicts ")
+    params = ()
+    if judge is not None:
+        sql += "WHERE model=%s "
+        params = (judge,)
+    sql += "ORDER BY pdf_path,criterion,chunk_idx"
     with conn.cursor() as c:
-        c.execute("SELECT pdf_path,criterion,chunk_idx,agreement,confidence,evidence_quote "
-                  "FROM chunk_verdicts ORDER BY pdf_path,criterion,chunk_idx")
+        c.execute(sql, params)
         out = {}
         for pid, crit, idx, agr, conf, quote in c.fetchall():
             out.setdefault((pid, crit), []).append((idx, agr, conf, quote))
@@ -781,12 +824,14 @@ def apply_recompute(conn, scores, codes, within, params, run_ts, control_scores=
 
 # --- reads (for report generation) -----------------------------------------
 
-def fetch_report(conn, run="baseline"):
+def fetch_report(conn, run="baseline", judge=None):
     """Reassemble the report payload for one embedding ``run`` from the DB tables.
 
     The embedding columns are read ``WHERE run=%s``; the LLM verdicts are read from the
-    run-agnostic ``verdicts`` table and attached per (code, pid, criterion), so every run
-    shares the same ground-truth labels."""
+    judge-keyed ``verdicts`` table. ``model`` is part of that table's PK, so pass ``judge``
+    to report against one specific judge; without it the most recently written judge wins
+    per (code, pid, criterion) — deterministic via ``ORDER BY run_ts`` last-wins, but
+    explicit ``judge`` is preferred once more than one judge is present."""
     with conn.cursor() as c:
         c.execute("SELECT code_number,pdf_path,method,criterion,e "
                   "FROM embedding_scores WHERE run=%s ORDER BY code_number,pdf_path",
@@ -798,11 +843,17 @@ def fetch_report(conn, run="baseline"):
         pole_rows = c.fetchall()
         c.execute("SELECT k,v FROM run_meta WHERE run=%s", (run,))
         meta = dict(c.fetchall())
-        c.execute("SELECT code_number,pdf_path,criterion,verdict,confidence "
-                  "FROM verdicts")
+        vsql = "SELECT code_number,pdf_path,criterion,verdict,confidence FROM verdicts "
+        vparams = ()
+        if judge is not None:
+            vsql += "WHERE model=%s "
+            vparams = (judge,)
+        vsql += "ORDER BY run_ts"  # last-wins per key when judges are mixed
+        c.execute(vsql, vparams)
         verdict_rows = c.fetchall()
 
-    # verdicts keyed by (code, pid, criterion) — shared across runs.
+    # verdicts keyed by (code, pid, criterion); when multiple judges are present and no
+    # ``judge`` filter was given, the run_ts ordering makes the newest judge win per key.
     vmap = {}
     for code, pid, crit, verdict, conf in verdict_rows:
         vmap[(code, pid, crit)] = (verdict, conf)

@@ -46,6 +46,22 @@ AUGMENTED_CSV = "code-categories-augmented.csv"
 PROTOTYPES_JSON = "prototypes.json"
 
 
+def load_env(path=".env"):
+    """Populate missing env vars from a dotenv file (e.g. OPENROUTER_API_KEY for the paid judge).
+
+    Uses ``setdefault`` so a value already in the environment is never clobbered, and is a
+    no-op if the file is absent — a free local run needs no secrets file.
+    """
+    import re
+    if not os.path.exists(path):
+        return
+    with open(path) as fh:
+        for line in fh:
+            m = re.match(r'\s*(?:export\s+)?([A-Z_]+)\s*=\s*["\']?([^"\'\n]+)', line)
+            if m:
+                os.environ.setdefault(m.group(1), m.group(2).strip())
+
+
 # --- judge backend selection ----------------------------------------------
 
 def make_judge(judge, host="http://asushimu:11434", reasoning="high", meter=None):
@@ -271,6 +287,8 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="cap papers (0 = all selected)")
     args = ap.parse_args()
 
+    load_env()  # OPENROUTER_API_KEY for the paid DeepSeek judge; no-op without .env
+
     checkpoint = args.checkpoint or (
         DEEPSEEK_CHECKPOINT if args.judge == "deepseek" else DEFAULT_CHECKPOINT)
 
@@ -356,7 +374,7 @@ def main():
     def _persist(conn):
         db.register_prompts(conn, prompt_entries)
         n_chunks = db.store_chunk_verdicts(conn, ckpt_records, model=model_tag)
-        n_verdicts = db.update_verdicts(conn, verdict_records)
+        n_verdicts = db.update_verdicts(conn, verdict_records, model=model_tag)
         return n_chunks, n_verdicts
     n_chunks, n_verdicts = db.run_with_reconnect(_persist)
     logger.info("persisted %d chunk_verdicts, %d verdicts (graded + categorical)",
