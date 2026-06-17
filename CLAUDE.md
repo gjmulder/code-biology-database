@@ -278,10 +278,13 @@ Embedding-side tuning is judged exhausted: the levers are set (§4), and an **em
 swap to gte-Qwen2-7B-instruct was built, tested, and deliberately shelved** — gte is the *same*
 decoder-only last-token architecture as harrier (the documented source of the anisotropy that
 overlaps the poles), so it is unlikely to widen them; the runner is kept as a non-destructive
-tested artifact (`run` column). The only remaining label-free lever is prototype/pole quality,
-expected to move things marginally. **The genuine constraint is now label quality, not the
-embedding** (§6) — the next real step is the re-tuned judge (§9) + a gold-set validation, not
-more embedding-side work. Full shelving rationale: `@test_runs.md` Run 3.
+tested artifact (`run` column). The last label-free lever — prototype/pole quality — was then
+**spent (2026-06-17, Run 7): the poles were rewritten domain-general** (`prototypes.json` rev 2,
+balanced multi-domain exemplars) to match the §9.1 judge and re-embedded; the poles came out
+well-formed (`within` 0.59–0.64, in-band) but **corpus-wide ρ stayed flat** — confirming, not
+fixing, the constraint. **The genuine constraint is now label quality, not the embedding** (§6)
+— the next real step is the re-tuned judge (§9) + a gold-set validation, not more embedding-side
+work. Full shelving rationale: `@test_runs.md` Run 3; domain-general pole rewrite: Run 7.
 
 ## 9. Judge redesign — graded, per-chunk, topic-grounded, control-anchored (2026-06-16)
 

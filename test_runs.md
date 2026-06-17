@@ -275,3 +275,46 @@ corpus-wide paid (DeepSeek V4 Pro) all-criteria run should be decided against th
 (MEMORY: gold-set is the live next step), **not** against ρ(e, verdict) — which this run shows no
 longer adjudicates the domain-general judge corpus-wide. `ranking_report.html` regeneration still
 pending.
+
+## Run 7 — domain-general prototype poles (2026-06-17, COMPLETE)
+
+Executes Run 6's untested **option (b)** ("build domain-general prototype poles to match the
+broadened judge") — the only remaining embedding-side lever that could re-couple the axes after
+the §9.1 judge went cross-domain. `prototypes.json` rewritten (rev 2): each pole is one
+domain-neutral definitional **anchor** plus five concrete instances spread across domains
+(genetic, neural, semiotic/language, signalling, immune/olfactory), so the genetic code is one
+instance among many and the diverse topicalities partially cancel in the mean — "neutrality by
+balance, not abstraction" (a pure-abstraction rev 1 was rejected: decoder-only embedders
+represent abstract relational prose weakly, which narrows the poles). Each criterion keeps its
+**own** theoretical negative (two_worlds: one continuous system; adaptors: direct contact/no
+mediator; arbitrariness: physically determined). Re-embedded poles + controls only
+(`embed_independent.py --controls-only`, harrier on the 3090 Ti, ~1 min GPU); papers untouched,
+`e` recomputed offline for all 219 from persisted vectors (k=0, strength=0.50). DB backed up
+first (§7.7).
+
+**Pole widths held — the rewrite did not degrade the poles** (the rev-1 worry didn't
+materialise): `within` two_worlds **+0.636**, adaptors **+0.595**, arbitrariness **+0.591** —
+all inside the prior molecular-pole 0.51–0.68 band.
+
+**But corpus-wide ρ stayed flat — option (b) did NOT re-couple the axes.** Scored against the
+Run-6 domain-general verdicts (all 219):
+
+| criterion | chunk ρ, domain-general poles (Run 7) | chunk ρ, molecular poles (Run 6 corpus-wide) |
+|---|---|---|
+| two_worlds    | +0.078 | +0.061 |
+| adaptors      | +0.040 | ≈flat |
+| arbitrariness | +0.129 | — |
+
+Essentially unchanged from the Run-6 collapse. Making `e` domain-general to match the
+domain-general judge does **not** restore corpus-wide agreement: the synthetic verdicts spread
+"met" across heterogeneous topics in a way no single contrastive axis tracks. Per-topic ρ (chunk)
+still shows the axis working **within coherent strata** — `[0] Morphological Codes` two_worlds
+**+0.463** / adaptors +0.244, `[2] Binding Code` adaptors **+0.342**, `[11] Cognitive Signal`
+arbitrariness +0.216 — but `[19] Neural Circuits` runs negative and many strata are `n/a` (no
+verdict variation), so it remains diagnostic-only.
+
+**Conclusion.** Run 7 closes out option (b): the domain-general poles are well-formed *and*
+design-consistent with the §9.1 judge, and are kept as the new `baseline`, but they confirm
+rather than fix the §8 verdict — **the binding constraint is label quality, not the embedding
+axis.** All three of Run 6's options are now spent on the embedding side; the real next step is
+unchanged: the gold-set validation (MEMORY), not more axis tuning.
