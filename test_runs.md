@@ -439,3 +439,75 @@ read-only, no GPU/spend), replacing the ad-hoc snippet. Re-run confirms the tabl
 the per-criterion split of the **282 B cells** is `adaptors` 184, `two_worlds` 65,
 `arbitrariness` 33 — `adaptors` (the molecular-fingerprint criterion the gold validation hinges
 on) carrying the bulk, as expected.
+
+## Run 11 — gold-set validation, paid DeepSeek (2026-06-18, COMPLETE)
+
+The first adjudication of **both** synthetic axes against authority ground truth (the
+Barbieri-anchored `gold_labels`, run-/judge-agnostic), not against each other. Gold set: **208
+positives** (4 tier-1 code-0 seminal texts + 204 tier-2 DB-endorsed molecular-code papers) and
+**240 soft negatives** (non-molecular by the Phase-1 topic allowlist, absent from every molecular
+code's reference list — in practice **neural-heavy**, the Run 4/6 top-4 neuro strata). The whole
+gold set was **re-judged fresh under the Run 10 fuzzy gate** by paid DeepSeek V4 Pro to a clean
+per-chunk checkpoint (positives + negatives), then `make_gold_report.py` joined gold polarity ×
+`e` × categorical verdict per criterion.
+
+**Spend (measured).** Positives 207 papers / 868→2692 chunk_verdicts / **$7.62**; negatives 240
+papers / 3479 chunk_verdicts / **$9.87** → **$17.48 total**, ~36% prefix-cached, in line with the
+$0.0088/chunk smoke estimate. Both persisted under `deepseek/deepseek-v4-pro`.
+
+**Embedding axis — does gold+ outrank gold−?** No — it **reverses**:
+
+| criterion | AUC | ρ(e, gold) | n+ | n− |
+|---|---|---|---|---|
+| two_worlds | **0.189** | −0.536 | 207 | 240 |
+| adaptors | 0.368 | −0.228 | 207 | 240 |
+| arbitrariness | 0.352 | −0.255 | 207 | 240 |
+
+All AUC < 0.5, all ρ negative. Spot-check confirms it is **not a sign/join bug**: the top-`e`
+two_worlds papers are all **neural** soft-negatives (jneurosci/eneuro/pcbi), the bottom-`e` are
+**molecular** gold positives (rna/pnas/nature-comms); mean `e` two_worlds gold+ = −0.015 vs
+gold− = +0.031. **Read:** the domain-general poles (Run 7, prototypes rev 2) match the neural
+"stimulus↔response / two-worlds" register **more** than dense molecular wet-lab prose, so against a
+molecular-authority gold the axis is anti-correlated. This is the §5/§8 "two axes measure different
+constructs" divergence **quantified against authority** — and a hard confound of the soft-negative
+pool composition (neural-heavy positives-vs-molecular-positives), not a clean "not-a-code" contrast.
+A topic-matched or hard-negative test is needed to separate genre/register from code-demonstration.
+
+**Judge axis — verdict (`met`=positive) vs gold polarity** (n=447 each):
+
+| criterion | precision | recall | F1 | TP | FP | FN | TN |
+|---|---|---|---|---|---|---|---|
+| two_worlds | 0.474 | 0.130 | 0.205 | 27 | 30 | 180 | 210 |
+| adaptors | **0.688** | 0.213 | 0.325 | 44 | 20 | 163 | 220 |
+| arbitrariness | 0.553 | 0.101 | 0.171 | 21 | 17 | 186 | 223 |
+
+The fuzzy-gated DeepSeek judge is **precise-ish but very conservative**: `adaptors` precision 0.69
+(the molecular-fingerprint criterion, strongest as in §5), but recall 0.10–0.21 everywhere — it
+marks most tier-2 positives **not_met**. This is the **coarse-label** signature flagged at gold
+construction: tier-2 = "paper in the supporting literature of an endorsed code," many of which
+(reviews, methods, single-facet papers) genuinely don't *individually* demonstrate the criterion.
+Low recall is partly the label, partly a skeptical judge; the 17–30 FP are mostly the §9.1
+domain-general judge legitimately marking neural soft-negatives met (not necessarily errors).
+
+**Takeaways.** (1) The embedding axis does **not** recover Barbieri's molecular-authority
+distinction — corroborating §8 that `e` keys on topicality/register, not code-demonstration.
+(2) The judge is the better-aligned axis (positive precision, esp. adaptors) but conservative
+against coarse tier-2 labels. (3) The soft-negative pool's neural composition is a live confound;
+hard negatives (Phase 4 exclusions) and a per-paper tier-2 audit are the next quality levers — not
+more axis tuning.
+
+**Phase 3 tier-1 upgrade — confirmed negative result (no spend, no mutation).** The plan's
+authority upgrade (promote a tier-2 paper to tier-1 when Barbieri/Major *also* cite it) yields
+**0 valid promotions**. `cited_signatures` extracts **427** `(surname, year)` signatures from 5
+seminal texts (*The Organic Codes* 2003 is image-based/truncated — 8.7k chars, no extractable
+bibliography — the one real data loss), but the intersection with the 200 tier-2 papers with
+parseable signatures is **empty**, and surname-only overlap is just 10/182. Across the *entire*
+embedded corpus only **9** papers match cited signatures — 4 are the code-0 texts self-citing, the
+other 5 coincidental (`wang 2008`, `brandon 2009`, …), 4 of which are soft negatives. **Cause:**
+Barbieri's personal bibliography (foundational/conceptual) and the ISCB `biological_codes.csv` code
+list (recent niche molecular-demonstration papers, tier-2 median year 2020) are **near-disjoint
+corpora**. Relaxing the match (surname-only / year ±1) would only admit the coincidental collisions
+and corrupt positives, so it was rejected. **tier-1 stays = the 4 code-0 seminal texts** (the
+conservative authority root); the tooling (`build_gold_set.py cite`) is correct, the data doesn't
+support expansion. (Aside: code-367/splicing references `dhir 2010`/`wang 2008` landed as soft
+negatives — a possible gold mis-stratification to revisit separately.)
