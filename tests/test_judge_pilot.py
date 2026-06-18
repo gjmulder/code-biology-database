@@ -78,6 +78,16 @@ def test_select_code_papers_restricts_to_a_code_number():
     assert selected == {"a.pdf": 11, "c.pdf": 13, "e.pdf": 19}
 
 
+def test_select_gold_papers_restricts_to_a_curated_pdf_set():
+    # The gold-validation subset (Phase 6) is a curated list spanning many codes, not a
+    # topic stratum or single code: select exactly the papers in `gold_paths` that have a
+    # dominant topic, carrying it for grounding. A gold path absent from chunk_topics
+    # (unembedded) is silently dropped.
+    gold_paths = {"a.pdf", "c.pdf", "z.pdf"}  # z.pdf has no dominant topic
+    selected = jp.select_gold_papers(_chunk_topics(), gold_paths)
+    assert selected == {"a.pdf": 11, "c.pdf": 13}
+
+
 # --- triple-keyed resumability --------------------------------------------
 
 def test_load_done_keys_on_pdf_chunk_criterion(tmp_path):

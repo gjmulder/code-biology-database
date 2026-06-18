@@ -166,6 +166,20 @@ def select_code_papers(chunk_topics, codes, code_number):
             if d is not None and str(codes.get(pid)) == str(code_number)}
 
 
+def select_gold_papers(chunk_topics, gold_paths):
+    """Papers in the curated ``gold_paths`` set, each carrying its dominant topic.
+
+    The Phase 6 gold-validation subset (CLAUDE.md §8 / plan) is a hand-curated list spanning
+    many codes — neither a topic stratum (:func:`select_pilot_papers`) nor a single code
+    (:func:`select_code_papers`). Selects exactly the gold papers that carry a dominant topic
+    (i.e. were embedded into ``chunk_topics``); a gold path absent from the embedding run is
+    silently dropped. ``gold_paths`` is any iterable/set of pdf_paths (e.g. the ``pos`` keys of
+    :func:`db.fetch_gold`)."""
+    gold = set(gold_paths)
+    doms = paper_dominant_topics(chunk_topics)
+    return {pid: d for pid, d in doms.items() if d is not None and pid in gold}
+
+
 def select_rest_papers(chunk_topics, n=DEFAULT_TOP):
     """The complement of :func:`select_pilot_papers`: every paper with a dominant topic
     **outside** the top-``n`` strata. This is the molecular "met" tail (CLAUDE.md §9 /
@@ -304,6 +318,12 @@ def main():
     ap.add_argument("--code", default=None,
                     help="judge only papers under this code_number (e.g. 0 = the foundational "
                          "Code Biology gold-positive set), ignoring the top-N strata selection")
+    ap.add_argument("--gold", action="store_true",
+                    help="judge the curated gold-validation subset (Phase 6) from the "
+                         "gold_labels table, ignoring the top-N strata selection")
+    ap.add_argument("--gold-polarity", default="pos", choices=("pos", "neg", "all"),
+                    help="which gold polarity to judge with --gold (default pos: the "
+                         "molecular gold positives + code-0)")
     ap.add_argument("--run", default="baseline", help="embedding run whose chunk_topics to use")
     ap.add_argument("--method", default="chunk")
     ap.add_argument("--judge", choices=("local", "deepseek"), default="local",
@@ -361,11 +381,16 @@ def main():
     # which is exactly what aborted the post-pilot persist. Reads + persist each get their
     # own fresh connection via db.run_with_reconnect (reconnect + retry on a transient drop).
     def _read(conn):
+        gold = db.fetch_gold(conn) if args.gold else None
         return (db.fetch_chunk_topics(conn, run=args.run, method=args.method),
-                db.fetch_vectors(conn, run=args.run)[2])
-    chunk_topics, codes = db.run_with_reconnect(_read)
+                db.fetch_vectors(conn, run=args.run)[2], gold)
+    chunk_topics, codes, gold = db.run_with_reconnect(_read)
 
-    if args.code is not None:
+    if args.gold:
+        gold_paths = {pid for (_code, pid, _crit), v in gold.items()
+                      if args.gold_polarity == "all" or v["polarity"] == args.gold_polarity}
+        selected = select_gold_papers(chunk_topics, gold_paths)
+    elif args.code is not None:
         selected = select_code_papers(chunk_topics, codes, args.code)
     elif args.rest:
         selected = select_rest_papers(chunk_topics, n=args.top)
@@ -374,7 +399,9 @@ def main():
     pids = sorted(selected)
     if args.limit:
         pids = pids[:args.limit]
-    if args.code is not None:
+    if args.gold:
+        logger.info("pilot: %d gold papers (polarity=%s)", len(pids), args.gold_polarity)
+    elif args.code is not None:
         logger.info("pilot: %d papers under code %s", len(pids), args.code)
     else:
         logger.info("pilot: %d papers %s top-%d topics %s",
