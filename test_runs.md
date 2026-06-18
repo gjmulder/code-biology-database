@@ -432,3 +432,10 @@ forward, making gate-threshold tuning offline-free (parity with the §4 embeddin
 near-total dominance of B over C decisively justifies the fuzzy gate and predicts the gold
 re-judge (Phase 6) will recover real positives — the `met` rate was suppressed by quote
 formatting, not by the judge disagreeing with the evidence.
+
+**Tooling (Phase 4.5 step 3, committed).** The diagnostic is now a tested, re-runnable script
+`diagnose_gate_cost.py` (pure `classify_cell`/`tally` unit-tested offline; DB+tokenizer driver
+read-only, no GPU/spend), replacing the ad-hoc snippet. Re-run confirms the table above exactly;
+the per-criterion split of the **282 B cells** is `adaptors` 184, `two_worlds` 65,
+`arbitrariness` 33 — `adaptors` (the molecular-fingerprint criterion the gold validation hinges
+on) carrying the bulk, as expected.
