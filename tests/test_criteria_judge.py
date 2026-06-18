@@ -388,6 +388,42 @@ def test_graded_gate_neutralises_fabrication():
     assert gated["grounding_failed"] is True
 
 
+# --- raw pre-gate retention (re-gating offline-free, parity with §4 levers) ----
+
+def test_graded_gate_retains_raw_agreement_on_neutralised_positive():
+    # the gate zeros the live agreement but keeps the pre-gate value + coverage so the
+    # threshold can be re-tuned from storage without re-judging
+    chunk = "the cat sat on the mat while the dog ran in the park"
+    parsed = cj.parse_graded(
+        _graded("strongly_agree", quote="quantum entanglement decoheres rapidly"), "two_worlds")
+    gated = cj.graded_grounding_gate(parsed, chunk)
+    assert gated["agreement"] == 0.0            # live value gated to neutral
+    assert gated["raw_agreement"] == 1.0        # pre-gate value retained
+    assert gated["grounding_failed"] is True
+    assert gated["coverage"] < cj.GROUNDING_TAU  # why it failed
+
+
+def test_graded_gate_retains_raw_and_coverage_on_grounded_positive():
+    chunk = "Codons specify amino acids and the tRNA bridges them."
+    parsed = cj.parse_graded(_graded("agree", quote="Codons specify amino acids"), "adaptors")
+    gated = cj.graded_grounding_gate(parsed, chunk)
+    assert gated["agreement"] == 0.5            # unchanged
+    assert gated["raw_agreement"] == 0.5        # raw == live for an ungated cell
+    assert gated["coverage"] >= cj.GROUNDING_TAU
+    assert gated["grounding_failed"] is False
+
+
+def test_graded_gate_records_raw_for_negative_without_gating():
+    # negatives pass through, but raw/coverage are still recorded — gate AFTER recording raw
+    chunk = "irrelevant text"
+    parsed = cj.parse_graded(_graded("disagree", quote="not present here at all"), "two_worlds")
+    gated = cj.graded_grounding_gate(parsed, chunk)
+    assert gated["agreement"] == -0.5
+    assert gated["raw_agreement"] == -0.5
+    assert gated["grounding_failed"] is False
+    assert "coverage" in gated
+
+
 # --- graded aggregation (per paper per criterion) -------------------------
 
 def _cs(agreement, confidence=1.0):

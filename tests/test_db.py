@@ -268,9 +268,12 @@ def test_chunk_verdict_rows_grain_and_keying():
         {"code_number": "5", "pdf_path": "pdfs/a.pdf", "criterion": "two_worlds",
          "chunk_idx": 1, "agreement": -0.5, "confidence": 0.33, "evidence_quote": ""},
     ]
+    # raw_agreement defaults to the live agreement, coverage to None, grounding_failed to 0
     rows = db.chunk_verdict_rows(records, run_ts="t")
-    assert (5, "pdfs/a.pdf", "two_worlds", 0, 0.5, 0.66, "q0", None, None, "t") in rows
-    assert (5, "pdfs/a.pdf", "two_worlds", 1, -0.5, 0.33, "", None, None, "t") in rows
+    assert (5, "pdfs/a.pdf", "two_worlds", 0, 0.5, 0.66, "q0", None, None,
+            0.5, None, 0, "t") in rows
+    assert (5, "pdfs/a.pdf", "two_worlds", 1, -0.5, 0.33, "", None, None,
+            -0.5, None, 0, "t") in rows
     assert len(rows) == 2
 
 
@@ -279,7 +282,24 @@ def test_chunk_verdict_rows_carries_model():
                 "chunk_idx": 0, "agreement": 1.0, "confidence": 1.0,
                 "evidence_quote": "x"}]
     rows = db.chunk_verdict_rows(records, run_ts="t", model="gemma-4-31b")
-    assert rows[0] == (1, "p", "adaptors", 0, 1.0, 1.0, "x", "gemma-4-31b", None, "t")
+    assert rows[0] == (1, "p", "adaptors", 0, 1.0, 1.0, "x", "gemma-4-31b", None,
+                       1.0, None, 0, "t")
+
+
+def test_chunk_verdict_rows_carries_pre_gate_snapshot():
+    # a gated cell: live agreement neutralised, but the pre-gate value + coverage are stored
+    records = [{"code_number": "1", "pdf_path": "p", "criterion": "adaptors",
+                "chunk_idx": 0, "agreement": 0.0, "confidence": 0.66, "evidence_quote": "x",
+                "raw_agreement": 1.0, "coverage": 0.4, "grounding_failed": True}]
+    rows = db.chunk_verdict_rows(records, run_ts="t", model="m")
+    assert rows[0] == (1, "p", "adaptors", 0, 0.0, 0.66, "x", "m", None,
+                       1.0, 0.4, 1, "t")
+
+
+def test_chunk_verdicts_ddl_has_pre_gate_columns():
+    ddl = "\n".join(db.DDL)
+    for col in ("raw_agreement", "coverage", "grounding_failed"):
+        assert col in ddl
 
 
 def test_verdict_update_rows_carries_model():
@@ -314,7 +334,8 @@ def test_chunk_verdict_rows_carries_prompt_hash():
                 "chunk_idx": 0, "agreement": 1.0, "confidence": 1.0,
                 "evidence_quote": "x", "prompt_hash": "deadbeef"}]
     rows = db.chunk_verdict_rows(records, run_ts="t", model="m")
-    assert rows[0] == (1, "p", "adaptors", 0, 1.0, 1.0, "x", "m", "deadbeef", "t")
+    assert rows[0] == (1, "p", "adaptors", 0, 1.0, 1.0, "x", "m", "deadbeef",
+                       1.0, None, 0, "t")
 
 
 def test_prompt_registry_rows_grain():

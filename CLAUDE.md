@@ -282,9 +282,12 @@ step is a gold-set validation, not more axis tuning.
 7. **Secrets** — `.env` is gitignored and never committed; never print API keys.
 8. **DB backup before schema changes** — always take a compressed `mysqldump` of `codebiology`
    **before** any schema change (new table/column, `ALTER`, migration, first `init_schema` on new
-   DDL): `mysqldump … codebiology | gzip > codebiology_$(date +%Y%m%d_%H%M%S).sql.gz` (connection
-   detail in `@environment_notes.md`; dumps are gitignored). Migrations are idempotent and
-   guarded, but the dump is the non-negotiable rollback path.
+   DDL): `mysqldump --single-transaction --no-tablespaces … codebiology | gzip > codebiology_$(date
+   +%Y%m%d_%H%M%S).sql.gz` (connection detail in `@environment_notes.md`; dumps are gitignored).
+   `--no-tablespaces` is **required** — the pipeline DB user lacks the global `PROCESS` privilege,
+   so without it mysqldump errors out probing tablespaces; `--single-transaction` gives a
+   consistent snapshot without locking. Migrations are idempotent and guarded, but the dump is the
+   non-negotiable rollback path.
 
 ## 8. Embedding side is at its ceiling — the constraint is label quality
 

@@ -188,17 +188,28 @@ GROUNDING_TAU = 0.85
 GROUNDING_MIN_BLOCK = 15
 
 
+def grounding_detail(quote, source_text, tau=GROUNDING_TAU, min_block=GROUNDING_MIN_BLOCK):
+    """Single source of truth for grounding: returns ``(grounded, coverage, longest_block)``.
+
+    ``grounded`` is True iff coverage ≥ ``tau`` over (possibly spliced) verbatim spans **and**
+    a contiguous run ≥ ``min(min_block, len(quote))``. ``coverage``/``longest_block`` are the raw
+    :func:`quote_coverage` outputs (over :func:`_norm_fuzzy` text), exposed so the gate can record
+    them and the threshold can be re-tuned offline (parity with the §4 embedding levers)."""
+    q = _norm_fuzzy(quote)
+    if not q:
+        return False, 0.0, 0
+    cov, longest = quote_coverage(quote, source_text, normalize=_norm_fuzzy)
+    return (cov >= tau and longest >= min(min_block, len(q))), cov, longest
+
+
 def is_grounded(quote, source_text, tau=GROUNDING_TAU, min_block=GROUNDING_MIN_BLOCK):
     """True if ``quote`` is fuzzily grounded in ``source_text``: coverage ≥ ``tau`` over
     (possibly spliced) verbatim spans **and** a contiguous run ≥ ``min(min_block, len(quote))``.
 
     Uses :func:`_norm_fuzzy` so smart quotes / dash variants / line-break hyphenation don't defeat
     a real quote. The ``τ=1.0`` limit reduces to strict-verbatim substring grounding."""
-    q = _norm_fuzzy(quote)
-    if not q:
-        return False
-    cov, longest = quote_coverage(quote, source_text, normalize=_norm_fuzzy)
-    return cov >= tau and longest >= min(min_block, len(q))
+    grounded, _, _ = grounding_detail(quote, source_text, tau=tau, min_block=min_block)
+    return grounded
 
 
 def grounding_gate(verdict, source_text):
@@ -247,17 +258,23 @@ def parse_graded(raw, criterion):
 
 def graded_grounding_gate(parsed, chunk_text):
     """Pull a *positive* graded score to neutral (0.0) unless its evidence quote is fuzzily
-    grounded in the chunk (:func:`is_grounded`). Negatives/neutral pass through untouched —
-    only an ungrounded claim of agreement is a hallucination risk."""
-    if parsed.get("agreement", 0.0) <= 0.0:
-        return parsed
-    if is_grounded(parsed.get("evidence_quote", ""), chunk_text):
-        return parsed
-    gated = dict(parsed)
-    gated["agreement"] = 0.0
-    gated["grounding_failed"] = True
-    logger.debug("graded grounding gate neutralised an ungrounded positive (quote not grounded)")
-    return gated
+    grounded in the chunk (:func:`grounding_detail`). Negatives/neutral pass through untouched —
+    only an ungrounded claim of agreement is a hallucination risk.
+
+    Records the pre-gate value **before** gating — ``raw_agreement`` (the incoming agreement),
+    ``coverage`` (the fuzzy quote coverage) and ``grounding_failed`` (True only when a positive
+    was actually neutralised) are always set, so the τ/L threshold can be re-tuned from storage
+    without re-judging (parity with the §4 embedding levers)."""
+    raw = parsed.get("agreement", 0.0)
+    grounded, coverage, _ = grounding_detail(parsed.get("evidence_quote", ""), chunk_text)
+    out = dict(parsed)
+    out["raw_agreement"] = raw
+    out["coverage"] = coverage
+    out["grounding_failed"] = raw > 0.0 and not grounded
+    if out["grounding_failed"]:
+        out["agreement"] = 0.0
+        logger.debug("graded grounding gate neutralised an ungrounded positive (quote not grounded)")
+    return out
 
 
 def aggregate_graded(chunk_scores):

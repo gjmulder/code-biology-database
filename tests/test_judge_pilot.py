@@ -107,21 +107,33 @@ def test_load_done_missing_file_is_empty(tmp_path):
 
 def test_chunk_record_shape_matches_chunk_verdict_rows():
     meta = {"code_number": "42", "pdf_path": "a.pdf", "code_name": "x"}
-    parsed = {"agreement": 0.5, "confidence": 0.66,
-              "evidence_quote": "q", "reasoning": "r"}
+    # a gated record carries the pre-gate value + coverage so re-gating is offline-free
+    parsed = {"agreement": 0.0, "confidence": 0.66, "evidence_quote": "q", "reasoning": "r",
+              "raw_agreement": 0.5, "coverage": 0.42, "grounding_failed": True}
     rec = jp.chunk_record(meta, 3, "adaptors", parsed)
     import criteria_judge as cj
     assert rec == {
         "code_number": "42", "pdf_path": "a.pdf", "chunk_idx": 3,
-        "criterion": "adaptors", "agreement": 0.5, "confidence": 0.66,
+        "criterion": "adaptors", "agreement": 0.0, "confidence": 0.66,
         "evidence_quote": "q", "reasoning": "r",
         "prompt_hash": cj.prompt_hash("adaptors"),
+        "raw_agreement": 0.5, "coverage": 0.42, "grounding_failed": True,
     }
     # db.chunk_verdict_rows must consume it without KeyError, carrying the prompt version
     import db
     rows = db.chunk_verdict_rows([rec], run_ts="t", model="gemma-4-31b")
-    assert rows == [(42, "a.pdf", "adaptors", 3, 0.5, 0.66, "q", "gemma-4-31b",
-                     cj.prompt_hash("adaptors"), "t")]
+    assert rows == [(42, "a.pdf", "adaptors", 3, 0.0, 0.66, "q", "gemma-4-31b",
+                     cj.prompt_hash("adaptors"), 0.5, 0.42, 1, "t")]
+
+
+def test_chunk_record_defaults_raw_to_live_agreement():
+    # a parsed record without the gate annotations (e.g. an un-gated path) defaults raw to
+    # the live agreement, coverage None, grounding_failed False
+    rec = jp.chunk_record({"code_number": "1", "pdf_path": "a.pdf"}, 0, "two_worlds",
+                          {"agreement": -0.5, "confidence": 0.33, "evidence_quote": ""})
+    assert rec["raw_agreement"] == -0.5
+    assert rec["coverage"] is None
+    assert rec["grounding_failed"] is False
 
 
 # --- roll-up to verdict records -------------------------------------------

@@ -218,6 +218,10 @@ def chunk_record(paper_meta, chunk_idx, criterion, parsed):
         "evidence_quote": parsed.get("evidence_quote", ""),
         "reasoning": parsed.get("reasoning", ""),
         "prompt_hash": cj.prompt_hash(criterion),
+        # pre-gate values (§9 grounding gate) — retained so τ/L re-tuning is offline-free
+        "raw_agreement": parsed.get("raw_agreement", parsed["agreement"]),
+        "coverage": parsed.get("coverage"),
+        "grounding_failed": bool(parsed.get("grounding_failed", False)),
     }
 
 

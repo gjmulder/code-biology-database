@@ -84,6 +84,9 @@ DDL = [
         evidence_quote TEXT,
         model          VARCHAR(128) NOT NULL DEFAULT 'unknown',  -- JUDGE model (PK component)
         prompt_hash    VARCHAR(64),          -- prompt version (criteria_judge.prompt_hash)
+        raw_agreement  DOUBLE,               -- pre-gate agreement (§9 gate re-tunable offline)
+        coverage       DOUBLE,               -- fuzzy quote coverage in the chunk
+        grounding_failed TINYINT(1),         -- 1 iff a positive was neutralised by the gate
         run_ts         DATETIME,
         PRIMARY KEY (code_number, pdf_path, criterion, chunk_idx, model)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -345,6 +348,18 @@ def migrate_runs(conn):
         if not _has_column(c, "chunk_verdicts", "prompt_hash"):
             c.execute("ALTER TABLE chunk_verdicts "
                       "ADD COLUMN prompt_hash VARCHAR(64) AFTER model")
+        # Pre-gate retention (§9 label-quality fix): keep the raw pre-gate agreement, the fuzzy
+        # quote coverage, and whether the gate fired, so the τ/L threshold is re-tunable offline
+        # (parity with the §4 levers). Guarded no-op once present; fresh DBs get them from the DDL.
+        if not _has_column(c, "chunk_verdicts", "raw_agreement"):
+            c.execute("ALTER TABLE chunk_verdicts "
+                      "ADD COLUMN raw_agreement DOUBLE AFTER prompt_hash")
+        if not _has_column(c, "chunk_verdicts", "coverage"):
+            c.execute("ALTER TABLE chunk_verdicts "
+                      "ADD COLUMN coverage DOUBLE AFTER raw_agreement")
+        if not _has_column(c, "chunk_verdicts", "grounding_failed"):
+            c.execute("ALTER TABLE chunk_verdicts "
+                      "ADD COLUMN grounding_failed TINYINT(1) AFTER coverage")
         # Judge-versioning: promote the JUDGE ``model`` into the PK of both verdict tables so
         # multiple judges coexist (guarded on the PK already containing ``model``). PK columns
         # must be NOT NULL, so back-fill the legacy NULL/blank judge tag to the Gemma corpus
@@ -499,12 +514,17 @@ def chunk_verdict_rows(records, run_ts=None, model=None):
     """Flat per-chunk graded records → tuples for the run-agnostic ``chunk_verdicts`` table.
 
     Each record is one ``(paper, criterion, chunk_idx)`` graded judgement
-    (``{code_number, pdf_path, criterion, chunk_idx, agreement, confidence,
-    evidence_quote}``) → tuple ``(code_number, pdf_path, criterion, chunk_idx, agreement,
-    confidence, evidence_quote, model, run_ts)``. ``model`` is the judge model."""
+    (``{code_number, pdf_path, criterion, chunk_idx, agreement, confidence, evidence_quote,
+    prompt_hash, raw_agreement, coverage, grounding_failed}``) → tuple ``(code_number, pdf_path,
+    criterion, chunk_idx, agreement, confidence, evidence_quote, model, prompt_hash,
+    raw_agreement, coverage, grounding_failed, run_ts)``. ``model`` is the judge model. The
+    raw/coverage/grounding_failed trio is the pre-gate snapshot (§9) — ``raw_agreement`` defaults
+    to the live ``agreement`` for records produced before the gate annotated them."""
     return [(int(r["code_number"]), r["pdf_path"], r["criterion"], int(r["chunk_idx"]),
              r.get("agreement"), r.get("confidence"), r.get("evidence_quote", ""),
-             model, r.get("prompt_hash"), run_ts)
+             model, r.get("prompt_hash"),
+             r.get("raw_agreement", r.get("agreement")), r.get("coverage"),
+             int(bool(r.get("grounding_failed", False))), run_ts)
             for r in records]
 
 
@@ -556,11 +576,12 @@ def store_chunk_verdicts(conn, records, model=None):
         c.executemany(
             "INSERT INTO chunk_verdicts "
             "(code_number,pdf_path,criterion,chunk_idx,agreement,confidence,"
-            "evidence_quote,model,prompt_hash,run_ts) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) AS new "
+            "evidence_quote,model,prompt_hash,raw_agreement,coverage,grounding_failed,run_ts) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) AS new "
             "ON DUPLICATE KEY UPDATE agreement=new.agreement, confidence=new.confidence, "
             "evidence_quote=new.evidence_quote, model=new.model, "
-            "prompt_hash=new.prompt_hash, run_ts=new.run_ts",
+            "prompt_hash=new.prompt_hash, raw_agreement=new.raw_agreement, "
+            "coverage=new.coverage, grounding_failed=new.grounding_failed, run_ts=new.run_ts",
             rows)
     conn.commit()
     return len(rows)
