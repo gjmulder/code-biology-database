@@ -404,6 +404,85 @@ def test_implicit_negatives_skips_papers_without_dominant_topic():
     assert [r["pdf_path"] for r in rows] == ["a.pdf"]
 
 
+# --- Phase 4: hard negatives (exclude) -------------------------------------
+
+def test_chunk_prose_windows_with_overlap():
+    text = "abcdefghij" * 3            # 30 chars
+    chunks = bgs.chunk_prose(text, max_chars=12, overlap=4)
+    assert chunks[0] == text[:12]
+    assert chunks[1] == text[8:20]     # advanced by step = max_chars - overlap = 8
+    assert "".join(c[:8] for c in chunks[:-1]) + chunks[-1][:] is not None  # no gaps
+    assert chunks[-1].endswith(text[-1])          # last window reaches the end
+    # short text → single window; empty/whitespace → none
+    assert bgs.chunk_prose("short", max_chars=100) == ["short"]
+    assert bgs.chunk_prose("   ", max_chars=100) == []
+
+
+def test_parse_exclusions_tolerant():
+    raw = ('{"exclusions": ['
+           '{"candidate": "metabolism", "quote": "metabolism is not a code", "reasoning": "no adaptor"},'
+           '{"candidate": "", "quote": "x"},'                       # no candidate → dropped
+           '{"candidate": "immune system"}]}')                     # no quote → empty quote kept
+    items = bgs.parse_exclusions(raw)
+    assert [it["candidate"] for it in items] == ["metabolism", "immune system"]
+    assert items[0]["quote"] == "metabolism is not a code" and items[0]["reasoning"] == "no adaptor"
+    assert items[1]["quote"] == ""
+    # no JSON / empty list → []
+    assert bgs.parse_exclusions("the model refused") == []
+    assert bgs.parse_exclusions('{"exclusions": []}') == []
+
+
+def test_ground_exclusions_keeps_only_verbatim_quotes():
+    passage = ("In Barbieri's view, metabolism is a continuous chemical process and is "
+               "therefore not an organic code at all, lacking any adaptor.")
+    items = [
+        {"candidate": "metabolism", "quote": "metabolism is a continuous chemical process",
+         "reasoning": "no adaptor"},                                   # verbatim → kept
+        {"candidate": "translation", "quote": "translation uses a wholly invented mapping",
+         "reasoning": "fabricated"},                                   # not in passage → dropped
+    ]
+    grounded = bgs.ground_exclusions(items, passage)
+    assert [it["candidate"] for it in grounded] == ["metabolism"]
+
+
+def test_match_candidate_to_code_conservative_content_tokens():
+    code_names = {7: "Chemical codes", 30: "Sugar code", 50: "Immune code"}
+    assert bgs.match_candidate_to_code("the immune code", code_names) == 50
+    assert bgs.match_candidate_to_code("immune system", code_names) is None   # 'system' != 'immune'-only key
+    assert bgs.match_candidate_to_code("metabolism", code_names) is None
+    assert bgs.match_candidate_to_code("", code_names) is None
+    # 'code' alone is a stopword → never a match on the empty content set
+    assert bgs.match_candidate_to_code("a code", code_names) is None
+
+
+def test_exclusion_rows_only_mapped_db_codes_over_their_embedded_papers():
+    grounded = [
+        {"candidate": "the immune code", "quote": "immune is not a code", "reasoning": "r"},
+        {"candidate": "metabolism", "quote": "metabolism is not a code", "reasoning": "r"},
+    ]
+    code_names = {50: "Immune code", 30: "Sugar code"}
+    codes = {"imm1.pdf": 50, "imm2.pdf": 50, "sug.pdf": 30}    # embedded corpus map
+    rows, conceptual = bgs.exclusion_rows(grounded, code_names, codes)
+    # immune maps to code 50 → both its embedded papers become hard negatives; metabolism is conceptual
+    assert [r["pdf_path"] for r in rows] == ["imm1.pdf", "imm2.pdf"]
+    assert all(r["polarity"] == "neg" and r["tier"] == "hard" and r["source"] == "exclusion"
+               and r["code_number"] == 50 and r["criterion"] == "all" for r in rows)
+    assert "immune" in rows[0]["evidence"].lower()
+    assert [c["candidate"] for c in conceptual] == ["metabolism"]
+
+
+def test_exclude_checkpoint_resume_keys_by_pdf_and_chunk(tmp_path):
+    ckpt = tmp_path / "exclusions.jsonl"
+    import json
+    with open(ckpt, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"pdf_path": "a.pdf", "chunk_idx": 0, "exclusions": []}) + "\n")
+        f.write(json.dumps({"pdf_path": "a.pdf", "chunk_idx": 1, "exclusions": []}) + "\n")
+        f.write("not json\n")                       # malformed line tolerated
+    done = bgs.load_exclude_done(str(ckpt))
+    assert done == {("a.pdf", 0), ("a.pdf", 1)}
+    assert bgs.load_exclude_done(str(tmp_path / "absent.jsonl")) == set()
+
+
 def test_select_merge_reclaims_barbieri_cite_rows():
     # after a cite pass some db rows became barbieri-cite; re-running select must reclaim BOTH
     # so the rebuilt tier-2 set never duplicates an upgraded paper.

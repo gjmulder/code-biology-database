@@ -34,6 +34,7 @@ Offline: reads persisted ``doc_vectors`` + ``topic_centroids`` (one embedding ``
 
 import argparse
 import csv as _csv
+import json
 import logging
 import os
 import re
@@ -41,6 +42,7 @@ from collections import Counter
 
 import numpy as np
 
+import criteria_judge as cj
 import embed_score as es
 import pdf_text as pt
 from assign_topics import paper_dominant_topic
@@ -505,6 +507,167 @@ def implicit_negatives(codes, dominant_by_pid, allowlist, mol_codes, topic_label
     return rows
 
 
+# --- Phase 4: hard negatives (exclude) -------------------------------------
+#
+# Authority-grounded negatives: an LLM pass over Barbieri's/Major's OWN seminal prose surfaces
+# passages where the author argues a named candidate is **not** an organic code (mere chemistry,
+# copying-not-coding, no adaptor, no arbitrariness). Each is grounded in a verbatim quote (reusing
+# the §9 fuzzy grounding gate) — a hallucinated exclusion is dropped. A candidate is mapped to a
+# corpus code by conservative content-token containment; matched codes' embedded papers become
+# `hard` gold−. Unmapped exclusions are kept as **conceptual** negatives (audit only — no corpus
+# paper to attach, so neither axis can be validated against them). Paid DeepSeek; checkpoint-first.
+
+EXCLUDE_CHECKPOINT = "exclusions.jsonl"          # spend-safety record (never deleted, §7.6)
+EXCLUSIONS_AUDIT = os.path.join(GOLD_DIR, "exclusions_audit.csv")
+# Prose-window size for the extraction scan (chars, not tokens — extraction is robust to the
+# window boundary and this keeps the scan tokenizer-free / offline-testable). Overlap so an
+# exclusion straddling a boundary is wholly present in at least one window.
+EXCLUDE_MAX_CHARS = 12000
+EXCLUDE_OVERLAP = 1500
+
+# Tokens carrying no discriminative power for candidate↔code-name matching.
+_NAME_STOP = {"code", "codes", "the", "a", "an", "of", "organic", "biological"}
+
+EXCLUDE_SYSTEM_PROMPT = (
+    "You are a Code Biology analyst reading Marcello Barbieri's and Jannie Major's own writing on "
+    "what is and is not an organic code. Identify every place where the author argues that a "
+    "specific named phenomenon or candidate is NOT an organic code — e.g. it is mere chemistry, "
+    "it is copying rather than coding, or it lacks adaptors or arbitrariness. Report ONLY explicit "
+    "exclusions the author actually asserts, each grounded in a verbatim quote copied exactly from "
+    "the passage. Reply with ONLY a JSON object."
+)
+
+
+def build_exclude_prompt(passage):
+    """The extraction instruction for one prose window (verbatim-grounded exclusions as JSON)."""
+    return (
+        "From the passage below, extract every case where the author argues that a specific named "
+        "candidate is NOT an organic code (or is copying rather than coding, or lacks the criteria "
+        "of two worlds / an adaptor / arbitrariness). For each, give the candidate (the thing being "
+        "excluded), a VERBATIM quote copied exactly from the passage, and a one-sentence reason. "
+        "If the passage excludes nothing, return an empty list.\n\n"
+        'Return exactly this JSON shape:\n'
+        '{"exclusions": [{"candidate": "<short name>", "quote": "<verbatim from the passage>", '
+        '"reasoning": "<1 sentence>"}]}\n\n'
+        f"=== PASSAGE ===\n{passage}"
+    )
+
+
+def chunk_prose(text, max_chars=EXCLUDE_MAX_CHARS, overlap=EXCLUDE_OVERLAP):
+    """Sliding character windows over ``text`` (step = ``max_chars - overlap``). One window if it
+    fits; none for empty/whitespace text. Deterministic; the last window always reaches the end."""
+    text = text or ""
+    if not text.strip():
+        return []
+    if len(text) <= max_chars:
+        return [text]
+    step = max(1, max_chars - overlap)
+    out, i = [], 0
+    while i < len(text):
+        out.append(text[i:i + max_chars])
+        if i + max_chars >= len(text):
+            break
+        i += step
+    return out
+
+
+def parse_exclusions(raw):
+    """A model reply → list of ``{candidate, quote, reasoning}`` dicts (tolerant).
+
+    Drops entries with no candidate; missing quote/reasoning default to empty. Returns ``[]`` on
+    no JSON, a non-list ``exclusions``, or an empty list — a window that excludes nothing is fine."""
+    try:
+        obj = cj._extract_json(raw)
+    except cj.JudgeError:
+        return []
+    items = obj.get("exclusions") if isinstance(obj, dict) else None
+    if not isinstance(items, list):
+        return []
+    out = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        cand = str(it.get("candidate", "") or "").strip()
+        if not cand:
+            continue
+        out.append({"candidate": cand,
+                    "quote": str(it.get("quote", "") or "").strip(),
+                    "reasoning": str(it.get("reasoning", "") or "").strip()})
+    return out
+
+
+def ground_exclusions(items, passage):
+    """Keep only exclusions whose ``quote`` is fuzzily grounded in ``passage`` (reuses the §9
+    :func:`criteria_judge.is_grounded` gate) — a hallucinated/paraphrased exclusion is dropped."""
+    return [it for it in items if cj.is_grounded(it.get("quote", ""), passage)]
+
+
+def _content_tokens(s):
+    """Lowercase alphanumeric tokens of ``s`` minus :data:`_NAME_STOP` (the discriminative words)."""
+    return {t for t in re.findall(r"[a-z0-9]+", (s or "").lower()) if t not in _NAME_STOP}
+
+
+def match_candidate_to_code(candidate, code_names):
+    """Map an excluded ``candidate`` to a corpus ``code_number`` by **conservative** content-token
+    equality: the candidate's discriminative tokens must exactly equal the code name's non-empty
+    discriminative tokens (lowest code_number on ties, for determinism). Extra content words in the
+    candidate (e.g. ``immune system`` vs the ``Immune code``) block the match. ``None`` if nothing
+    matches — kept conceptual."""
+    cand = _content_tokens(candidate)
+    if not cand:
+        return None
+    for cn in sorted(code_names):
+        key = _content_tokens(code_names[cn])
+        if key and key == cand:
+            return cn
+    return None
+
+
+def exclusion_rows(grounded, code_names, codes):
+    """Grounded exclusions → ``(hard_negative_rows, conceptual)``.
+
+    A candidate mapping to a corpus code (:func:`match_candidate_to_code`) that has embedded papers
+    yields one ``hard`` gold− row per such paper (deduped). Unmapped / un-embedded exclusions are
+    returned as ``conceptual`` (the item dict, audit only). ``codes`` is the embedded ``pdf_path →
+    code_number`` map; ``code_names`` is ``code_number → name``."""
+    by_code = {}
+    for pid, cn in codes.items():
+        by_code.setdefault(cn, []).append(pid)
+    rows, conceptual, seen = [], [], set()
+    for it in grounded:
+        cn = match_candidate_to_code(it["candidate"], code_names)
+        if cn is None or cn not in by_code:
+            conceptual.append(it)
+            continue
+        quote = (it.get("quote", "") or "")[:120]
+        for pid in sorted(by_code[cn]):
+            if (cn, pid) in seen:
+                continue
+            seen.add((cn, pid))
+            rows.append({"code_number": cn, "pdf_path": pid, "polarity": "neg",
+                         "tier": "hard", "source": "exclusion", "criterion": "all",
+                         "evidence": f"Barbieri excludes '{it['candidate']}': \"{quote}\""})
+    return rows, conceptual
+
+
+def load_exclude_done(checkpoint_path):
+    """``{(pdf_path, chunk_idx), …}`` already extracted (resumability; malformed lines skipped)."""
+    done = set()
+    if not os.path.exists(checkpoint_path):
+        return done
+    with open(checkpoint_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+                done.add((rec["pdf_path"], int(rec["chunk_idx"])))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                log.warning("skipping malformed exclusion checkpoint line")
+    return done
+
+
 # --- CLI: select (Phase 1) -------------------------------------------------
 
 def _write_csv(path, header, rows):
@@ -642,6 +805,127 @@ def cmd_implicit(args):
              "merged into %s (%d total rows)", len(mol), len(rows), args.gold_set, len(merged))
 
 
+def collect_grounded(checkpoint_path):
+    """All grounded exclusion items recorded in the checkpoint (across every scanned chunk).
+
+    The checkpoint is the spend-safety system-of-record (§7.6): each line is one scanned
+    ``(pdf_path, chunk_idx)`` whose ``exclusions`` are already grounded (gate applied before the
+    line was written). Returns the flat list of item dicts for :func:`exclusion_rows`."""
+    out = []
+    if not os.path.exists(checkpoint_path):
+        return out
+    with open(checkpoint_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                log.warning("skipping malformed exclusion checkpoint line")
+                continue
+            for it in rec.get("exclusions") or []:
+                if isinstance(it, dict) and (it.get("candidate") or "").strip():
+                    out.append({"candidate": it.get("candidate", ""),
+                                "quote": it.get("quote", ""),
+                                "reasoning": it.get("reasoning", ""),
+                                "source_pdf": rec.get("pdf_path", "")})
+    return out
+
+
+def write_exclusions_audit(path, grounded, code_names, codes):
+    """Audit CSV of **every** grounded exclusion (mapped or conceptual), for human review."""
+    rows = []
+    for it in grounded:
+        cn = match_candidate_to_code(it["candidate"], code_names)
+        mapped = cn if (cn is not None and cn in set(codes.values())) else ""
+        rows.append([it.get("source_pdf", ""), it["candidate"], mapped,
+                     (code_names.get(cn, "") if cn is not None else ""),
+                     it.get("quote", ""), it.get("reasoning", "")])
+    _write_csv(path, ["source_pdf", "candidate", "mapped_code", "mapped_name",
+                      "quote", "reasoning"], rows)
+
+
+def cmd_exclude(args):
+    """Phase 4 (hard negatives): paid DeepSeek pass over the seminal-text prose surfacing every
+    candidate Barbieri/Major argue is **not** an organic code. Checkpoint-first (``exclusions.jsonl``,
+    never deleted, §7.6) and resumable per ``(pdf_path, chunk_idx)``. Grounded exclusions mapping to
+    an embedded corpus code become ``hard`` gold− rows (over that code's papers); the rest are kept
+    in ``gold/exclusions_audit.csv`` as conceptual negatives. Merges into ``gold_set.csv``."""
+    from judge_pilot import load_env
+    load_env()  # OPENROUTER_API_KEY for the paid DeepSeek pass; no-op without .env
+
+    paths = seminal_pdfs(args.pdf_dir, args.seed_csv)
+    log.info("scanning %d seminal PDFs for exclusions (checkpoint %s)", len(paths), args.checkpoint)
+    done = load_exclude_done(args.checkpoint)
+    meter = cj.UsageMeter()
+    complete = cj.openrouter_graded_factory(reasoning_effort=args.reasoning, meter=meter)
+
+    scanned = 0
+    for path in paths:
+        text = pt.extract_text(path)
+        windows = chunk_prose(text)
+        for idx, passage in enumerate(windows):
+            if (path, idx) in done:
+                continue
+            try:
+                raw = complete(EXCLUDE_SYSTEM_PROMPT, build_exclude_prompt(passage),
+                               response_format={"type": "json_object"})
+            except Exception as e:  # per-window isolation; checkpoint preserves progress
+                log.warning("exclusion call failed for %s chunk %d: %s", path, idx, e)
+                continue
+            grounded = ground_exclusions(parse_exclusions(raw), passage)
+            cj.append_checkpoint(args.checkpoint,
+                                 {"pdf_path": path, "chunk_idx": idx, "exclusions": grounded})
+            scanned += 1
+            if grounded:
+                log.info("%s chunk %d → %d grounded exclusion(s)", os.path.basename(path), idx,
+                         len(grounded))
+
+    log.info("scanned %d new windows; DeepSeek spend ≈ $%.4f (%d calls)",
+             scanned, meter.cost(), meter.calls)
+
+    import db
+    conn = db.connect()
+    try:
+        _dv, _poles, codes = db.fetch_vectors(conn, run=args.run)
+    finally:
+        conn.close()
+    code_names = load_code_names(args.csv)
+    grounded = collect_grounded(args.checkpoint)
+    write_exclusions_audit(args.exclusions_audit, grounded, code_names, codes)
+
+    rows, conceptual = exclusion_rows(grounded, code_names, codes)
+    existing = read_gold_set(args.gold_set)
+    # A hard negative must never contradict a positive for the same paper: drop (and log) any
+    # exclusion row whose pdf_path is already a gold+ instance.
+    positives = {r["pdf_path"] for r in existing if r.get("polarity") == "pos"}
+    kept = [r for r in rows if r["pdf_path"] not in positives]
+    dropped = len(rows) - len(kept)
+    if dropped:
+        log.warning("dropped %d hard-negative row(s) conflicting with existing gold+ positives",
+                    dropped)
+    # Corpus-mapped hard negatives are advisory: Barbieri's exclusions overwhelmingly target
+    # concepts with NO corpus paper, so the rare candidate↔code-name collisions are where a
+    # context-misread exclusion (e.g. "prokaryotes could not evolve a splicing code" reads as
+    # excluding the splicing code) silently enters the authoritative set. So the default run is
+    # **audit-only** — review gold/exclusions_audit.csv and pass --merge-mapped to ratify.
+    if not args.merge_mapped:
+        log.info("Phase 4 (hard): %d grounded exclusions → %d candidate corpus-mapped row(s) "
+                 "(%d conceptual). AUDIT-ONLY: reviewed in %s; gold_set.csv unchanged. "
+                 "Re-run with --merge-mapped to ratify the mapped rows.",
+                 len(grounded), len(kept), len(conceptual), args.exclusions_audit)
+        for r in kept:
+            log.info("  candidate hard− code %s %s | %s", r["code_number"], r["pdf_path"],
+                     r["evidence"][:100])
+        return
+    merged = merge_gold(existing, kept, {"exclusion"})
+    write_gold_set(args.gold_set, merged)
+    log.info("Phase 4 (hard): %d grounded exclusions → %d corpus-mapped hard gold− rows "
+             "(%d conceptual, audit-only); merged into %s (%d total rows)",
+             len(grounded), len(kept), len(conceptual), args.gold_set, len(merged))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -671,6 +955,24 @@ def main(argv=None):
     imp.add_argument("--molecular-topics", default=MOLECULAR_TOPICS_CSV)
     imp.add_argument("--gold-set", default=GOLD_SET_PATH)
     imp.set_defaults(func=cmd_implicit)
+
+    exc = sub.add_parser("exclude", help="Phase 4: hard gold− = Barbieri/Major explicit exclusions "
+                                         "(paid DeepSeek; checkpoint-first)")
+    exc.add_argument("--run", default="baseline", help="embedding run for the corpus map")
+    exc.add_argument("--csv", default=CSV_PATH)
+    exc.add_argument("--gold-set", default=GOLD_SET_PATH)
+    exc.add_argument("--pdf-dir", default=CODE_BIOLOGY_PDFS,
+                     help="directory of the seminal Barbieri/Major PDFs")
+    exc.add_argument("--seed-csv", default=SEED_CSV)
+    exc.add_argument("--checkpoint", default=EXCLUDE_CHECKPOINT,
+                     help="resumable per-(pdf,chunk) JSONL spend-safety record (never deleted)")
+    exc.add_argument("--exclusions-audit", default=EXCLUSIONS_AUDIT,
+                     help="CSV of every grounded exclusion (mapped + conceptual) for review")
+    exc.add_argument("--reasoning", default="high", help="DeepSeek reasoning effort")
+    exc.add_argument("--merge-mapped", action="store_true",
+                     help="ratify the corpus-mapped hard negatives into gold_set.csv "
+                          "(default: audit-only — review gold/exclusions_audit.csv first)")
+    exc.set_defaults(func=cmd_exclude)
 
     args = ap.parse_args(argv)
     args.func(args)
