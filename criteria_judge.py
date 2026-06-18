@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 
 import pdf_text
 from download_pdfs import output_path_for, read_rows
@@ -122,6 +123,10 @@ def parse_judgment(raw, expected_keys):
 # --- grounding gate --------------------------------------------------------
 
 def _norm_ws(s):
+    # NFKC folds typographic ligatures (ﬁ→fi, ﬂ→fl, ﬃ→ffi, …) and other compatibility
+    # forms to their ASCII equivalents, so a PDF-extracted ligature in the source can't
+    # defeat a quote the model rendered in plain ASCII (label-quality fix, CLAUDE.md §6/§9).
+    s = unicodedata.normalize("NFKC", s)
     return re.sub(r"\s+", " ", s).strip().lower()
 
 

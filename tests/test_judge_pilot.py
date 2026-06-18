@@ -69,6 +69,15 @@ def test_select_rest_papers_is_complement_of_top_strata():
     assert set(rest) & set(pilot) == set()
 
 
+def test_select_code_papers_restricts_to_a_code_number():
+    # codes maps pdf_path -> code_number; select only the papers under code "0"
+    # (the foundational Code Biology texts), carrying each one's dominant topic
+    # for grounding. Matches on string-equal code number (CSV/DB are stringy).
+    codes = {"a.pdf": 0, "b.pdf": "12", "c.pdf": 0, "d.pdf": 5, "e.pdf": 0}
+    selected = jp.select_code_papers(_chunk_topics(), codes, "0")
+    assert selected == {"a.pdf": 11, "c.pdf": 13, "e.pdf": 19}
+
+
 # --- triple-keyed resumability --------------------------------------------
 
 def test_load_done_keys_on_pdf_chunk_criterion(tmp_path):

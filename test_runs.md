@@ -347,3 +347,49 @@ exemplar's domain moves ~9–14% of judgments with effect sizes ≤0.033 on the 
 washes it out and trends slightly *more* skeptical — so there is no robust molecular halo. The
 verdicts are robust to the exemplar's domain, which supports (does not threaten) label quality.
 Variants kept non-destructively under their tags; baseline `deepseek/deepseek-v4-pro` unchanged.
+
+## Run 9 — code-0 gold-positive calibration, paid DeepSeek (2026-06-18, COMPLETE)
+
+A direct sanity check of the skeptical DeepSeek judge against the canonical positive: **does it
+mark Barbieri's own defining texts as meeting all three criteria?** The two foundational *Code
+Biology* papers (reserved **code 0**, CLAUDE.md §1b) are Barbieri's all-three-criteria exemplar,
+so they are the closest thing to a gold positive available without a gold set. Topics assigned
+offline (`assign_topics.py`), then judged on the same baseline genetic-anchor **DeepSeek V4 Pro**
+as the 219-paper corpus via a new `judge_pilot.py --code 0` selector (`select_code_papers`, tests
+in `tests/test_judge_pilot.py`) — papers under one `code_number`, ignoring the top-N strata.
+7 chunks × 3 criteria; checkpoints `deepseek_verdicts.jsonl` (first run) + `deepseek_code0_regate.jsonl`
+(re-gate after the ligature fix below). Cost $0.079 total ($0.061 + $0.018, ~99% prompt-cached).
+
+Re-gated categorical / graded_max:
+
+| paper | two_worlds | adaptors | arbitrariness | all three? |
+|---|---|---|---|---|
+| Introduction to Code Biology (2014) | met (+1.0) | met (+1.0) | not_met (0.0) | No |
+| What Is Code Biology? (2018)        | not_met (0.0) | met (+1.0) | met (+1.0) | No |
+
+**Read — the grounding gate, not the judge's reasoning, is the dominant factor.** DeepSeek's
+*reasoning* reads both papers as exemplifying all three criteria — there is no substantive
+disagreement with Barbieri. Every `not_met` is a **quoting** failure, not a judgment: the model
+**reconstructs** its `evidence_quote` (stitching real, non-adjacent sentences — e.g. Barbieri's
+"mapping between two independent worlds" definition spliced onto the genetic-code example that
+doesn't follow it contiguously), and the verbatim grounding gate (CLAUDE.md §9) correctly refuses
+to credit a spliced quote. On the 2018 two_worlds chunks the longest contiguous overlap with any
+quote was 13 chars — genuine splicing, not a typographic artifact.
+
+**Ligature-folding gate fix (label-quality, shipped this run).** Diagnosis of the *first* run's
+2014→2018 cells found one cell defeated only by a `ﬁ`-ligature in the PDF source vs a plain-ASCII
+quote — a real gate brittleness, not splicing. `criteria_judge._norm_ws` now NFKC-normalises
+before the substring check, folding typographic ligatures (ﬁ→fi, ﬂ→fl, ﬃ→ffi, …) so a PDF
+ligature can no longer false-negative an otherwise-verbatim quote (TDD, +3 offline tests, suite
+287). The re-judge realised the fix on the persisted verdicts; it did **not** flip 2018 two_worlds
+because that fresh stochastic sample spliced all four two_worlds quotes (the gate working as
+designed, above).
+
+**Conclusion.** The judge is *substantively* correct on the gold positive but the strict verbatim
+gate withholds the categorical `met` whenever the model paraphrases/splices — sharpening the §6/§8
+label-quality constraint into two faces: (a) gate brittleness to PDF artifacts (ligatures now
+fixed; curly-quote folding is a similar cheap next fix), and (b) the model's tendency to
+reconstruct quotes, which inflates `not_met`. A sentence-level / span-set verbatim check (accept a
+quote assembled from verbatim sentences, reject true fabrication) is the substantive next gate
+improvement — deferred, not chased here. No bearing on the corpus verdicts; the gold-set plan
+remains the live next step (MEMORY).

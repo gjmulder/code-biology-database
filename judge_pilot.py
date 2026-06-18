@@ -153,6 +153,19 @@ def select_pilot_papers(chunk_topics, n=DEFAULT_TOP):
     return {pid: d for pid, d in doms.items() if d is not None and d in top}
 
 
+def select_code_papers(chunk_topics, codes, code_number):
+    """Papers under a single ``code_number``, each carrying its dominant topic.
+
+    Selects independently of the top-N strata: used to judge the foundational **code 0**
+    Code Biology texts (CLAUDE.md §1b) as a gold-positive calibration set — does the
+    skeptical judge mark Barbieri's own defining papers met? — and any future code-keyed
+    subset. ``codes`` is the ``db.fetch_vectors`` pdf_path→code_number map; the comparison
+    is string-equal because code numbers are stringy across the CSV / DB."""
+    doms = paper_dominant_topics(chunk_topics)
+    return {pid: d for pid, d in doms.items()
+            if d is not None and str(codes.get(pid)) == str(code_number)}
+
+
 def select_rest_papers(chunk_topics, n=DEFAULT_TOP):
     """The complement of :func:`select_pilot_papers`: every paper with a dominant topic
     **outside** the top-``n`` strata. This is the molecular "met" tail (CLAUDE.md §9 /
@@ -284,6 +297,9 @@ def main():
     ap.add_argument("--rest", action="store_true",
                     help="judge the COMPLEMENT of the top-N strata (the molecular tail "
                          "outside the neuro top-N) instead of the top-N themselves")
+    ap.add_argument("--code", default=None,
+                    help="judge only papers under this code_number (e.g. 0 = the foundational "
+                         "Code Biology gold-positive set), ignoring the top-N strata selection")
     ap.add_argument("--run", default="baseline", help="embedding run whose chunk_topics to use")
     ap.add_argument("--method", default="chunk")
     ap.add_argument("--judge", choices=("local", "deepseek"), default="local",
@@ -345,14 +361,21 @@ def main():
                 db.fetch_vectors(conn, run=args.run)[2])
     chunk_topics, codes = db.run_with_reconnect(_read)
 
-    selected = (select_rest_papers(chunk_topics, n=args.top) if args.rest
-                else select_pilot_papers(chunk_topics, n=args.top))
+    if args.code is not None:
+        selected = select_code_papers(chunk_topics, codes, args.code)
+    elif args.rest:
+        selected = select_rest_papers(chunk_topics, n=args.top)
+    else:
+        selected = select_pilot_papers(chunk_topics, n=args.top)
     pids = sorted(selected)
     if args.limit:
         pids = pids[:args.limit]
-    logger.info("pilot: %d papers %s top-%d topics %s",
-                len(pids), "OUTSIDE" if args.rest else "across", args.top,
-                top_topic_ids(chunk_topics, n=args.top))
+    if args.code is not None:
+        logger.info("pilot: %d papers under code %s", len(pids), args.code)
+    else:
+        logger.info("pilot: %d papers %s top-%d topics %s",
+                    len(pids), "OUTSIDE" if args.rest else "across", args.top,
+                    top_topic_ids(chunk_topics, n=args.top))
 
     done = load_done(checkpoint)
     write_lock = threading.Lock()

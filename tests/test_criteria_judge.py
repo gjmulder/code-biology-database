@@ -266,6 +266,25 @@ def test_graded_grounding_gate_ignores_non_positive():
     assert not gated.get("grounding_failed")
 
 
+def test_norm_ws_folds_typographic_ligatures():
+    # PDF extraction yields ﬁ/ﬂ ligatures (U+FB01/02); a model quoting the same text
+    # renders them as ASCII "fi"/"fl". The verbatim check must see them as equal.
+    assert cj._norm_ws("the ﬁrst ﬂow") == cj._norm_ws("the first flow")
+    assert cj._norm_ws("eﬃcient") == cj._norm_ws("efficient")  # ﬃ -> ffi
+
+
+def test_graded_grounding_gate_keeps_positive_across_ligature_artifact():
+    # genuine verbatim quote defeated only by a PDF ﬁ-ligature must survive the gate
+    chunk = "First and second messengers belong to two independent ﬁelds."
+    parsed = cj.parse_graded(
+        _graded("strongly_agree",
+                quote="first and second messengers belong to two independent fields"),
+        "two_worlds")
+    gated = cj.graded_grounding_gate(parsed, chunk)
+    assert gated["agreement"] == 1.0
+    assert not gated.get("grounding_failed")
+
+
 # --- graded aggregation (per paper per criterion) -------------------------
 
 def _cs(agreement, confidence=1.0):
