@@ -321,6 +321,73 @@ def test_quote_coverage_empty_quote_is_zero():
     assert cj.quote_coverage("", "anything") == (0.0, 0)
 
 
+# --- fuzzy normalisation (_norm_fuzzy: smart quotes, dashes, line-break hyphenation) ---
+
+def test_norm_fuzzy_folds_smart_quotes():
+    assert cj._norm_fuzzy("the “code” isn’t fixed") == cj._norm_fuzzy('the "code" isn\'t fixed')
+
+
+def test_norm_fuzzy_joins_line_break_hyphenation():
+    # PDF wraps "transla-\ntion" across a line; the model quotes "translation"
+    assert cj._norm_fuzzy("transla-\ntion of codons") == cj._norm_fuzzy("translation of codons")
+
+
+def test_norm_fuzzy_normalises_dash_variants():
+    assert cj._norm_fuzzy("two–world model") == cj._norm_fuzzy("two-world model")
+
+
+# --- graded grounding gate: fuzzy acceptance / rejection -------------------
+
+def test_graded_gate_keeps_spliced_noncontiguous_quote():
+    # two real clauses of the chunk, the middle dropped — strict-verbatim would zero this
+    chunk = "Codons specify amino acids. A long aside intervenes here. The tRNA bridges them."
+    parsed = cj.parse_graded(
+        _graded("strongly_agree", quote="Codons specify amino acids. The tRNA bridges them."),
+        "adaptors")
+    gated = cj.graded_grounding_gate(parsed, chunk)
+    assert gated["agreement"] == 1.0
+    assert not gated.get("grounding_failed")
+
+
+def test_graded_gate_keeps_smart_quote_variant():
+    chunk = 'The mapping is "conventional" not physically dictated.'
+    parsed = cj.parse_graded(
+        _graded("agree", quote="The mapping is “conventional” not physically dictated."),
+        "arbitrariness")
+    gated = cj.graded_grounding_gate(parsed, chunk)
+    assert gated["agreement"] == 0.5
+    assert not gated.get("grounding_failed")
+
+
+def test_graded_gate_keeps_line_break_hyphenation_variant():
+    chunk = "The transla-\ntion apparatus reads the codon as a sign."
+    parsed = cj.parse_graded(
+        _graded("agree", quote="The translation apparatus reads the codon as a sign."),
+        "adaptors")
+    gated = cj.graded_grounding_gate(parsed, chunk)
+    assert gated["agreement"] == 0.5
+    assert not gated.get("grounding_failed")
+
+
+def test_graded_gate_neutralises_paraphrase():
+    chunk = "the mapping between two independent worlds is conventional"
+    parsed = cj.parse_graded(
+        _graded("strongly_agree", quote="the mapping connecting two separate worlds is arbitrary"),
+        "arbitrariness")
+    gated = cj.graded_grounding_gate(parsed, chunk)
+    assert gated["agreement"] == 0.0
+    assert gated["grounding_failed"] is True
+
+
+def test_graded_gate_neutralises_fabrication():
+    chunk = "the cat sat on the mat while the dog ran in the park"
+    parsed = cj.parse_graded(
+        _graded("agree", quote="quantum entanglement decoheres rapidly"), "two_worlds")
+    gated = cj.graded_grounding_gate(parsed, chunk)
+    assert gated["agreement"] == 0.0
+    assert gated["grounding_failed"] is True
+
+
 # --- graded aggregation (per paper per criterion) -------------------------
 
 def _cs(agreement, confidence=1.0):
@@ -418,6 +485,21 @@ def test_grounding_gate_ignores_non_met_verdicts():
     out = cj.grounding_gate(v, SOURCE)
     assert out["verdict"] == "not_met"
     assert "grounding_failed" not in out
+
+
+def test_grounding_gate_keeps_spliced_noncontiguous_quote():
+    # "The tRNA acts as an adaptor ... codons and amino acids" with the middle dropped
+    v = {"verdict": "met", "evidence_quote": "The tRNA acts as an codons and amino acids."}
+    out = cj.grounding_gate(v, SOURCE)
+    assert out["verdict"] == "met"
+    assert out.get("grounding_failed") is not True
+
+
+def test_grounding_gate_downgrades_paraphrase():
+    v = {"verdict": "met", "evidence_quote": "transfer RNA serves to link triplets with residues"}
+    out = cj.grounding_gate(v, SOURCE)
+    assert out["verdict"] == "unclear"
+    assert out["grounding_failed"] is True
 
 
 # --- judge_criteria (model injected) ---------------------------------------

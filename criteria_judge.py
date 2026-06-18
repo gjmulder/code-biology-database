@@ -131,7 +131,30 @@ def _norm_ws(s):
     return re.sub(r"\s+", " ", s).strip().lower()
 
 
-def quote_coverage(quote, chunk):
+# Typographic drift the model introduces vs the PDF-extracted source: smart quotes the model
+# renders as ASCII, en/em/figure dashes and minus signs vs the hyphen, and the soft hyphen.
+_FUZZY_PUNCT = {
+    ord("‘"): "'", ord("’"): "'", ord("‛"): "'",   # ‘ ’ ‛
+    ord("“"): '"', ord("”"): '"', ord("„"): '"',   # “ ” „
+    ord("–"): "-", ord("—"): "-", ord("‒"): "-",   # – — ‒
+    ord("‐"): "-", ord("‑"): "-", ord("−"): "-",   # ‐ ‑ −
+    ord("­"): "",                                            # soft hyphen
+}
+
+
+def _norm_fuzzy(s):
+    """Like :func:`_norm_ws` but also folds smart quotes / dash variants to ASCII and **joins
+    line-break hyphenation** (``transla-\\ntion`` → ``translation``), then drops remaining hyphens.
+
+    Applied symmetrically to quote and source by the grounding gate, so a quote the model
+    rendered with clean punctuation still matches a PDF-extracted source that wrapped or
+    hyphenated it. Strictly a superset of :func:`_norm_ws` matches — never narrows grounding."""
+    s = unicodedata.normalize("NFKC", s).translate(_FUZZY_PUNCT)
+    s = re.sub(r"-\s*", "", s)  # join hyphenated line breaks; drop hyphens (symmetric on both sides)
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
+def quote_coverage(quote, chunk, normalize=_norm_ws):
     """Diagnostic: how much of ``quote`` is verbatim-grounded in ``chunk``, allowing the
     quote to be assembled from *multiple non-contiguous* spans of the chunk.
 
@@ -142,28 +165,53 @@ def quote_coverage(quote, chunk):
     matching run, in characters. A spliced-but-real quote scores coverage≈1.0 with a long
     block; a paraphrase drops coverage; a fabrication has only short blocks. **Diagnostic
     only — it does NOT gate** (the CLAUDE.md §9 grounding gate stays strict-verbatim)."""
-    q = _norm_ws(quote)
+    q = normalize(quote)
     if not q:
         return 0.0, 0
-    sm = difflib.SequenceMatcher(a=q, b=_norm_ws(chunk), autojunk=False)
+    sm = difflib.SequenceMatcher(a=q, b=normalize(chunk), autojunk=False)
     blocks = sm.get_matching_blocks()  # trailing sentinel has size 0
     matched = sum(b.size for b in blocks)
     longest = max((b.size for b in blocks), default=0)
     return matched / len(q), longest
 
 
+# Fuzzy grounding thresholds (CLAUDE.md §9, label-quality fix). The strict-verbatim gate
+# (substring containment) zeroed legitimate positives defeated by paraphrase fragments, smart
+# quotes, hyphenation or *spliced* multi-span quotes. The gate now grounds on quote_coverage:
+#   * GROUNDING_TAU      — fraction of the quote's chars that must be drawn from the source.
+#                          0.85 cleanly separates spliced-real (≈1.0) from paraphrase (<0.8).
+#   * GROUNDING_MIN_BLOCK — longest single contiguous run (chars) required, so a fabrication
+#                          whose words are individually present but never as a real run is still
+#                          rejected. Capped at the quote length so a short real quote still passes.
+# Re-tunable; raw pre-gate values are retained so re-gating is offline-free (parity with §4 levers).
+GROUNDING_TAU = 0.85
+GROUNDING_MIN_BLOCK = 15
+
+
+def is_grounded(quote, source_text, tau=GROUNDING_TAU, min_block=GROUNDING_MIN_BLOCK):
+    """True if ``quote`` is fuzzily grounded in ``source_text``: coverage ≥ ``tau`` over
+    (possibly spliced) verbatim spans **and** a contiguous run ≥ ``min(min_block, len(quote))``.
+
+    Uses :func:`_norm_fuzzy` so smart quotes / dash variants / line-break hyphenation don't defeat
+    a real quote. The ``τ=1.0`` limit reduces to strict-verbatim substring grounding."""
+    q = _norm_fuzzy(quote)
+    if not q:
+        return False
+    cov, longest = quote_coverage(quote, source_text, normalize=_norm_fuzzy)
+    return cov >= tau and longest >= min(min_block, len(q))
+
+
 def grounding_gate(verdict, source_text):
-    """Downgrade a ``met`` verdict to ``unclear`` unless its evidence quote is a
-    verbatim (whitespace-normalised) substring of the source text."""
+    """Downgrade a ``met`` verdict to ``unclear`` unless its evidence quote is fuzzily
+    grounded in the source text (:func:`is_grounded`)."""
     if verdict.get("verdict") != "met":
         return verdict
-    quote = _norm_ws(verdict.get("evidence_quote", ""))
-    if quote and quote in _norm_ws(source_text):
+    if is_grounded(verdict.get("evidence_quote", ""), source_text):
         return verdict
     downgraded = dict(verdict)
     downgraded["verdict"] = "unclear"
     downgraded["grounding_failed"] = True
-    logger.debug("grounding gate downgraded a 'met' verdict (quote not found)")
+    logger.debug("grounding gate downgraded a 'met' verdict (quote not grounded)")
     return downgraded
 
 
@@ -198,18 +246,17 @@ def parse_graded(raw, criterion):
 
 
 def graded_grounding_gate(parsed, chunk_text):
-    """Pull a *positive* graded score to neutral (0.0) unless its evidence quote is a
-    verbatim (whitespace-normalised) substring of the chunk. Negatives/neutral pass through
-    untouched — only an ungrounded claim of agreement is a hallucination risk."""
+    """Pull a *positive* graded score to neutral (0.0) unless its evidence quote is fuzzily
+    grounded in the chunk (:func:`is_grounded`). Negatives/neutral pass through untouched —
+    only an ungrounded claim of agreement is a hallucination risk."""
     if parsed.get("agreement", 0.0) <= 0.0:
         return parsed
-    quote = _norm_ws(parsed.get("evidence_quote", ""))
-    if quote and quote in _norm_ws(chunk_text):
+    if is_grounded(parsed.get("evidence_quote", ""), chunk_text):
         return parsed
     gated = dict(parsed)
     gated["agreement"] = 0.0
     gated["grounding_failed"] = True
-    logger.debug("graded grounding gate neutralised an ungrounded positive (quote not found)")
+    logger.debug("graded grounding gate neutralised an ungrounded positive (quote not grounded)")
     return gated
 
 
