@@ -424,3 +424,42 @@ def test_run_with_reconnect_gives_up_after_retries():
     assert calls["n"] == 3                        # initial attempt + 2 retries
     assert len(conns) == 3
     assert all(c.closed for c in conns)
+
+
+# --- gold_labels (Phase 5): the Barbieri-anchored gold reference set ---------
+
+GOLD_RECORDS = [
+    {"code_number": "3", "pdf_path": "pdfs/g.pdf", "polarity": "pos", "tier": "2",
+     "source": "db", "criterion": "all", "evidence": "Genetic code · topic 3"},
+    {"code_number": "29", "pdf_path": "pdfs/n.pdf", "polarity": "neg", "tier": "soft",
+     "source": "implicit", "criterion": "all", "evidence": "non-molecular: topic 11"},
+]
+
+
+def test_gold_rows_grain_and_keying():
+    # one row per gold_set.csv record, tuple
+    # (code_number, pdf_path, polarity, criterion, tier, source, evidence, run_ts);
+    # code_number coerced to int.
+    rows = db.gold_rows(GOLD_RECORDS, run_ts="t")
+    assert (3, "pdfs/g.pdf", "pos", "all", "2", "db", "Genetic code · topic 3", "t") in rows
+    assert (29, "pdfs/n.pdf", "neg", "all", "soft", "implicit",
+            "non-molecular: topic 11", "t") in rows
+    assert len(rows) == 2
+
+
+def test_gold_rows_criterion_defaults_to_all():
+    # a record with no/blank criterion lands as the run-agnostic 'all' default
+    rows = db.gold_rows([{"code_number": 1, "pdf_path": "p", "polarity": "pos",
+                          "tier": "1", "source": "code0", "criterion": "",
+                          "evidence": "x"}], run_ts="t")
+    assert rows[0] == (1, "p", "pos", "all", "1", "code0", "x", "t")
+
+
+def test_gold_labels_ddl_run_and_judge_agnostic():
+    ddl = "\n".join(db.DDL)
+    assert "CREATE TABLE IF NOT EXISTS gold_labels" in ddl
+    # ground truth: keyed on (code, paper, polarity, criterion) — NO run, NO judge model
+    assert "PRIMARY KEY (code_number, pdf_path, polarity, criterion)" in ddl
+    # locate the gold_labels DDL block and assert it carries no run/model column
+    block = ddl.split("CREATE TABLE IF NOT EXISTS gold_labels", 1)[1].split("ENGINE", 1)[0]
+    assert " run " not in block and "model" not in block

@@ -926,6 +926,23 @@ def cmd_exclude(args):
              len(grounded), len(kept), len(conceptual), args.gold_set, len(merged))
 
 
+def cmd_materialise(args):
+    """Phase 5: materialise the git-tracked ``gold_set.csv`` into the ``gold_labels`` DB table
+    for report JOINs. Run-/judge-agnostic ground truth (no embedding run, no judge). Idempotent
+    upsert — safe to re-run after any phase refreshes the CSV. **Backup the DB first** (§7.8)."""
+    rows = read_gold_set(args.gold_set)
+    if not rows:
+        log.warning("no rows in %s — run the select/cite/implicit phases first", args.gold_set)
+        return
+    import db
+    conn = db.connect()
+    try:
+        n = db.store_gold(conn, rows)
+    finally:
+        conn.close()
+    log.info("Phase 5: materialised %d gold labels from %s into gold_labels", n, args.gold_set)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -973,6 +990,11 @@ def main(argv=None):
                      help="ratify the corpus-mapped hard negatives into gold_set.csv "
                           "(default: audit-only — review gold/exclusions_audit.csv first)")
     exc.set_defaults(func=cmd_exclude)
+
+    mat = sub.add_parser("materialise", help="Phase 5: load gold_set.csv into the gold_labels "
+                                             "DB table (run-/judge-agnostic ground truth)")
+    mat.add_argument("--gold-set", default=GOLD_SET_PATH)
+    mat.set_defaults(func=cmd_materialise)
 
     args = ap.parse_args(argv)
     args.func(args)

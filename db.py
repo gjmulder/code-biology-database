@@ -186,6 +186,27 @@ DDL = [
         PRIMARY KEY (run, topic_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
+    # The Barbieri-anchored gold reference set (plan: stateless-leaping-fiddle, Phase 5) —
+    # the **ground truth** the two synthetic axes are finally validated against (CLAUDE.md
+    # §6/§8: label quality is the binding constraint). Unlike every other table here it is
+    # **run-agnostic AND judge-agnostic** (no ``run``, no judge ``model``): the authority
+    # label does not depend on which embedding model or judge produced a score. Materialises
+    # the git-tracked ``gold_set.csv`` for report JOINs onto ``embedding_scores``/``verdicts``
+    # on (code_number, pdf_path, criterion). ``criterion`` defaults to 'all' (a label that
+    # holds for every criterion); ``polarity`` is pos|neg, ``tier`` 1|2|hard|soft.
+    """
+    CREATE TABLE IF NOT EXISTS gold_labels (
+        code_number INT          NOT NULL,
+        pdf_path    VARCHAR(255) NOT NULL,
+        polarity    VARCHAR(8)   NOT NULL,            -- pos | neg
+        criterion   VARCHAR(32)  NOT NULL DEFAULT 'all',  -- all | two_worlds | adaptors | arbitrariness
+        tier        VARCHAR(16),                      -- 1 | 2 | hard | soft
+        source      VARCHAR(32),                      -- db | code0 | barbieri-cite | exclusion | implicit
+        evidence    TEXT,
+        run_ts      DATETIME,
+        PRIMARY KEY (code_number, pdf_path, polarity, criterion)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
     # Per-chunk nearest-topic assignment (assign_topics.py): each chunk's argmax topic
     # and its cosine in the centred space. Lets the report stratify ρ by a paper's
     # (max-pooled) dominant topic without re-deriving it. Run/method-keyed.
@@ -528,6 +549,19 @@ def chunk_verdict_rows(records, run_ts=None, model=None):
             for r in records]
 
 
+def gold_rows(records, run_ts=None):
+    """Gold-set CSV records → tuples for the run-/judge-agnostic ``gold_labels`` table.
+
+    Each record is one ``gold_set.csv`` row (``{code_number, pdf_path, polarity, tier,
+    source, criterion, evidence}``) → tuple ``(code_number, pdf_path, polarity, criterion,
+    tier, source, evidence, run_ts)``. ``code_number`` is coerced to int; a missing/blank
+    ``criterion`` defaults to ``'all'`` (the label holds for every criterion)."""
+    return [(int(r["code_number"]), r["pdf_path"], r["polarity"],
+             (r.get("criterion") or "all"), r.get("tier"), r.get("source"),
+             r.get("evidence"), run_ts)
+            for r in records]
+
+
 def prompt_registry_rows(entries, run_ts=None):
     """Prompt-version entries → tuples for ``prompt_registry``.
 
@@ -585,6 +619,44 @@ def store_chunk_verdicts(conn, records, model=None):
             rows)
     conn.commit()
     return len(rows)
+
+
+def store_gold(conn, records):
+    """Upsert the gold reference set into the run-/judge-agnostic ``gold_labels`` table.
+
+    ``records`` is the ``gold_set.csv`` row list (``build_gold_set.read_gold_set`` output).
+    Idempotent — re-running refreshes ``tier``/``source``/``evidence`` for an existing
+    ``(code_number, pdf_path, polarity, criterion)`` key. Returns rows written."""
+    import datetime
+    init_schema(conn)
+    run_ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    rows = gold_rows(records, run_ts=run_ts)
+    with conn.cursor() as c:
+        c.executemany(
+            "INSERT INTO gold_labels "
+            "(code_number,pdf_path,polarity,criterion,tier,source,evidence,run_ts) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) AS new "
+            "ON DUPLICATE KEY UPDATE tier=new.tier, source=new.source, "
+            "evidence=new.evidence, run_ts=new.run_ts",
+            rows)
+    conn.commit()
+    return len(rows)
+
+
+def fetch_gold(conn):
+    """Load the gold reference set → ``{(code_number, pdf_path, criterion):
+    {'polarity', 'tier', 'source', 'evidence'}}`` (empty if none stored).
+
+    Ground truth — run-agnostic and judge-agnostic; joined to ``embedding_scores`` and
+    ``verdicts`` on ``(code_number, pdf_path, criterion)`` for the gold validation report."""
+    with conn.cursor() as c:
+        c.execute("SELECT code_number,pdf_path,polarity,criterion,tier,source,evidence "
+                  "FROM gold_labels ORDER BY code_number,pdf_path,criterion")
+        out = {}
+        for code, pid, polarity, crit, tier, source, evidence in c.fetchall():
+            out[(code, pid, crit)] = {"polarity": polarity, "tier": tier,
+                                      "source": source, "evidence": evidence}
+        return out
 
 
 def register_prompts(conn, entries):

@@ -497,3 +497,32 @@ def test_select_merge_reclaims_barbieri_cite_rows():
     merged = bgs.merge_gold(existing, fresh, {"db", "barbieri-cite"})
     assert [r["pdf_path"] for r in merged] == ["pdfs/neg.pdf", "pdfs/sugar.pdf"]
     assert sum(r["pdf_path"] == "pdfs/sugar.pdf" for r in merged) == 1   # no duplicate
+
+
+def test_cmd_materialise_reads_csv_and_stores(tmp_path, monkeypatch):
+    # Phase 5: `materialise` reads gold_set.csv and hands the records to db.store_gold,
+    # without touching the embedding run or any judge model. Stub the DB boundary.
+    path = tmp_path / "gold_set.csv"
+    bgs.write_gold_set(str(path), [
+        {"code_number": "3", "pdf_path": "pdfs/g.pdf", "polarity": "pos", "tier": "2",
+         "source": "db", "criterion": "all", "evidence": "Genetic code"},
+        {"code_number": "29", "pdf_path": "pdfs/n.pdf", "polarity": "neg", "tier": "soft",
+         "source": "implicit", "criterion": "all", "evidence": "non-molecular"},
+    ])
+    import db
+    captured = {}
+    monkeypatch.setattr(db, "connect", lambda *a, **k: _DummyConn())
+    monkeypatch.setattr(db, "store_gold", lambda conn, records: captured.setdefault("recs", records) or len(records))
+
+    class Args:
+        gold_set = str(path)
+    bgs.cmd_materialise(Args())
+
+    recs = captured["recs"]
+    assert [r["polarity"] for r in recs] == ["pos", "neg"]
+    assert {r["source"] for r in recs} == {"db", "implicit"}
+
+
+class _DummyConn:
+    def close(self):
+        pass
