@@ -95,6 +95,65 @@ def test_rank_codes_genetic_and_sugar_above_language_and_dance():
     assert gen[1] == "Genetic code" and gen[2] == 2
 
 
+def test_artificial_anchor_is_unit_and_separates_from_molecular():
+    # molecular papers ~ +e0; the computer_code_positive control points ~ +e1 (a distinct
+    # direction). The artificial anchor seeded from that control must rank an artificial-leaning
+    # held-out paper ABOVE a genetic paper, while the molecular anchor ranks them the other way.
+    dim = 4
+    e0 = np.zeros(dim); e0[0] = 1.0
+    e1 = np.zeros(dim); e1[1] = 1.0
+    doc_vecs = {
+        "g1.pdf": {"chunk": [e0 + 0.05 * e1, e0 - 0.05 * e1]},
+        "g2.pdf": {"chunk": [e0]},
+        "py.pdf": {"chunk": [e1 + 0.05 * e0]},   # artificial-leaning held-out paper
+        "lang.pdf": {"chunk": [-e0]},
+    }
+    codes = {"g1.pdf": 12, "g2.pdf": 12, "py.pdf": 99, "lang.pdf": 200}
+    names = {12: "Genetic code", 99: "Computer code", 200: "Language code"}
+    poles = _poles(dim)
+    project, mol = bgs.molecular_anchor(doc_vecs, poles, bgs.anchor_pids(codes, names))
+    art = bgs.artificial_anchor(project, {"computer_code_positive": e1})
+    assert np.isclose(np.linalg.norm(art), 1.0)
+    # py is more artificial than the genetic paper; genetic is more molecular than py
+    assert (bgs.paper_molecularness(project, art, doc_vecs["py.pdf"]["chunk"])
+            > bgs.paper_molecularness(project, art, doc_vecs["g1.pdf"]["chunk"]))
+    assert (bgs.paper_molecularness(project, mol, doc_vecs["g1.pdf"]["chunk"])
+            > bgs.paper_molecularness(project, mol, doc_vecs["py.pdf"]["chunk"]))
+
+
+def test_artificial_anchor_requires_a_present_seed():
+    doc_vecs, codes, names = _toy_corpus()
+    poles = _poles(4)
+    project, _ = bgs.molecular_anchor(doc_vecs, poles, bgs.anchor_pids(codes, names))
+    import pytest
+    with pytest.raises(ValueError):
+        bgs.artificial_anchor(project, {})                       # no control vectors at all
+    with pytest.raises(ValueError):
+        bgs.artificial_anchor(project, {"unrelated": np.ones(4)})  # seed key absent
+
+
+def test_rank_codes_contrast_surfaces_artificial_lean():
+    dim = 4
+    e0 = np.zeros(dim); e0[0] = 1.0
+    e1 = np.zeros(dim); e1[1] = 1.0
+    doc_vecs = {
+        "g1.pdf": {"chunk": [e0]},
+        "py.pdf": {"chunk": [e1]},
+        "lang.pdf": {"chunk": [-e0]},
+    }
+    codes = {"g1.pdf": 12, "py.pdf": 99, "lang.pdf": 200}
+    names = {12: "Genetic code", 99: "Computer code", 200: "Language code"}
+    poles = _poles(dim)
+    project, mol = bgs.molecular_anchor(doc_vecs, poles, bgs.anchor_pids(codes, names))
+    art = bgs.artificial_anchor(project, {"computer_code_positive": e1})
+    rows = bgs.rank_codes_contrast(doc_vecs, codes, names, project, mol, art)
+    # rows: (code_number, code_name, n_papers, mean_mol, mean_art, mean_diff); diff = art - mol,
+    # sorted most-artificial-first → Computer code leads, Genetic code trails.
+    assert rows[0][0] == 99 and rows[-1][0] == 12
+    diffs = [r[5] for r in rows]
+    assert diffs == sorted(diffs, reverse=True)
+
+
 def test_rank_topics_orders_by_proximity_to_anchor():
     doc_vecs, codes, names = _toy_corpus()
     poles = _poles(4)

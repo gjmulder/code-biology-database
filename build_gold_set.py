@@ -18,6 +18,15 @@ confirmed with the user before Phase 2 consumes it. The four borderline topics
 (Morphological, Pathological, Olfactory, Synthetic) are expected to fall on the
 non-molecular side — a testable prediction, not a hand decision.
 
+A second, **artificial-code anchor** (``computer_code_positive``) provides a contrast pole: a
+clean exemplar of the §9.1 *broadened* criteria (source↔execution bridged by the interpreter,
+arbitrary symbol→operation mapping) that is explicitly **not** an organic code under Barbieri's
+strict §1 definition. The corpus holds no computer-code papers, so unlike the molecular anchor it
+is seeded from the authored ``_controls`` exemplar embedded once
+(``embed_independent --controls-only``) and projected into the *same* centred space. ``select``
+then writes ``gold/artificial_contrast.csv`` (molecular vs artificial cosine per code) — a
+diagnostic only; the artificial anchor is kept **out** of the molecular gold-positive pool.
+
 Offline: reads persisted ``doc_vectors`` + ``topic_centroids`` (one embedding ``run``) and
 ``biological_codes.csv``; no GPU, no spend. The selection run is gated on the completed
 ``baseline`` embed (Phase 0).
@@ -74,6 +83,22 @@ def _paper_vecs(methods, method="chunk"):
     return methods.get(method) or methods.get("full") or next(iter(methods.values()))
 
 
+# The control exemplar(s) that seed the artificial-code anchor (prototypes.json `_controls`).
+# Unlike the molecular anchor — averaged over real in-corpus genetic-code papers — the corpus
+# holds no computer-code papers, so this anchor is seeded from an authored exemplar passage
+# embedded once (embed_independent --controls-only → control_vectors). It is a *contrast* anchor:
+# a clean artificial code under the §9.1 broadened criteria, but NOT an organic code under
+# Barbieri's strict §1 definition, so it is kept out of the molecular gold-positive pool.
+ARTIFICIAL_SEED_KEYS = ("computer_code_positive",)
+
+
+def _anchor_from_reps(reps, what):
+    """Unit mean of a list of projected representative vectors (the anchor direction)."""
+    if not reps:
+        raise ValueError(f"no {what} found to seed the anchor")
+    return es._l2(np.mean(reps, axis=0))
+
+
 def molecular_anchor(doc_vecs, poles, anchor_ids, method="chunk",
                      k=es.DEFAULT_WHITEN_K, strength=es.DEFAULT_SHARED_STRENGTH):
     """``(project, anchor)`` — the genetic-code centroid in the centred §4 space.
@@ -91,9 +116,20 @@ def molecular_anchor(doc_vecs, poles, anchor_ids, method="chunk",
         vecs = _paper_vecs(methods, method)
         reps.append(np.mean([project(np.asarray(v, dtype=np.float64)) for v in vecs],
                             axis=0))
-    if not reps:
-        raise ValueError("no genetic-code anchor papers found in doc_vecs")
-    return project, es._l2(np.mean(reps, axis=0))
+    return project, _anchor_from_reps(reps, "genetic-code anchor papers in doc_vecs")
+
+
+def artificial_anchor(project, control_vecs, seed_keys=ARTIFICIAL_SEED_KEYS):
+    """The artificial-code anchor in the *same* centred space as ``project``.
+
+    Seeded from the authored ``_controls`` exemplar(s) named in ``seed_keys`` (default
+    ``computer_code_positive``), each embedded as one ``control_vectors`` row and projected
+    through the shared scorer. Unit mean of the present seeds. Raises if no named seed is in
+    ``control_vecs`` (run ``embed_independent --controls-only`` first). Reuse the same
+    ``project`` returned by :func:`molecular_anchor` so both anchors share one geometry."""
+    reps = [project(np.asarray(control_vecs[k], dtype=np.float64))
+            for k in seed_keys if k in control_vecs]
+    return _anchor_from_reps(reps, f"artificial seed control vectors {list(seed_keys)}")
 
 
 def paper_molecularness(project, anchor, vecs):
@@ -119,6 +155,28 @@ def rank_codes(doc_vecs, codes, code_names, project, anchor, method="chunk"):
     rows = [(cn, code_names.get(cn, ""), len(ms), float(np.mean(ms)), float(np.max(ms)))
             for cn, ms in by_code.items()]
     rows.sort(key=lambda r: -r[3])
+    return rows
+
+
+def rank_codes_contrast(doc_vecs, codes, code_names, project, mol_anchor, art_anchor,
+                        method="chunk"):
+    """Codes scored against BOTH anchors, ranked most-artificial-leaning first.
+
+    Returns ``[(code_number, code_name, n_papers, mean_mol, mean_art, mean_diff), ...]`` where
+    ``mean_diff = mean_art - mean_mol``; a positive diff means the code's papers sit closer to the
+    artificial (computer-code) anchor than the molecular one. Diagnostic contrast only — it does
+    not assign gold labels (the artificial anchor is excluded from the molecular gold pool)."""
+    mol = rank_papers(doc_vecs, project, mol_anchor, method)
+    art = rank_papers(doc_vecs, project, art_anchor, method)
+    by_code = {}
+    for pid in doc_vecs:
+        by_code.setdefault(codes.get(pid), []).append((mol[pid], art[pid]))
+    rows = []
+    for cn, pairs in by_code.items():
+        mm = float(np.mean([m for m, _ in pairs]))
+        ma = float(np.mean([a for _, a in pairs]))
+        rows.append((cn, code_names.get(cn, ""), len(pairs), mm, ma, ma - mm))
+    rows.sort(key=lambda r: -r[5])
     return rows
 
 
@@ -150,6 +208,7 @@ def cmd_select(args):
     try:
         doc_vecs, poles, codes = db.fetch_vectors(conn, run=args.run)
         centroids = db.fetch_topic_centroids(conn, run=args.run)
+        control_vecs = db.fetch_control_vectors(conn, run=args.run)
     finally:
         conn.close()
     names = load_code_names(args.csv)
@@ -174,6 +233,24 @@ def cmd_select(args):
             log.info("  %2d  %+.4f  %s", tid, c, lbl)
     else:
         log.warning("no topic_centroids for run=%s — skipping topic ranking", args.run)
+
+    # Artificial-code contrast anchor (computer_code_positive), seeded from an embedded control
+    # exemplar rather than corpus papers (the corpus holds no computer-code papers). Gated on a
+    # one-off `embed_independent --controls-only --run %s` having embedded the seed.
+    have_seed = [k for k in ARTIFICIAL_SEED_KEYS if k in control_vecs]
+    if have_seed:
+        art_anchor = artificial_anchor(project, control_vecs)
+        contrast = rank_codes_contrast(doc_vecs, codes, names, project, anchor, art_anchor,
+                                       method=args.method)
+        _write_csv(os.path.join(GOLD_DIR, "artificial_contrast.csv"),
+                   ["code_number", "code_name", "n_papers", "mean_mol", "mean_art", "mean_diff"],
+                   [(cn, nm, n, f"{mm:.4f}", f"{ma:.4f}", f"{d:+.4f}")
+                    for cn, nm, n, mm, ma, d in contrast])
+        log.info("artificial anchor seeded from %s; wrote molecular↔artificial contrast", have_seed)
+    else:
+        log.warning("no %s control vector for run=%s — run `embed_independent --controls-only "
+                    "--run %s` to embed the seed, then re-run select for the artificial contrast",
+                    list(ARTIFICIAL_SEED_KEYS), args.run, args.run)
 
 
 def main(argv=None):
