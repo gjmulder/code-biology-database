@@ -1,0 +1,25 @@
+topic_id,label,molecular,molecularity,basis
+3,Genetic Code,yes,0.4177,anchor
+10,Synthetic Code,yes,0.3800,user-confirmed-borderline
+16,Molecular Codes,yes,0.2941,clear-molecular
+17,Prebiotic Code,yes,0.2577,clear-molecular
+18,Histonic Code,yes,0.2258,clear-molecular
+1,Genomic Code,yes,0.1670,clear-molecular
+7,Chemical Codes,yes,0.1559,clear-molecular
+12,Ubiquitination Code,yes,0.1507,clear-molecular
+5,Phosphorylation Code,yes,0.1204,clear-molecular
+14,Hox Code,yes,0.0278,molecular-by-identity
+2,Binding Code,yes,0.0180,molecular-by-identity
+15,Signal Code,yes,-0.0035,molecular-by-identity
+6,Pathological Code,no,0.0993,excluded-borderline
+9,Code Theory,no,0.0977,non-molecular
+23,Lab Methods,no,0.0830,non-molecular
+8,Regulatory Code,no,0.0820,excluded-borderline
+4,Language Code,no,0.0472,non-molecular
+22,Code Philosophy,no,0.0465,non-molecular
+0,Morphological Codes,no,-0.0007,excluded-borderline
+20,Code Mathematics,no,-0.0009,non-molecular
+21,Code Physics,no,-0.0287,non-molecular
+13,Olfactory Code,no,-0.1555,non-molecular
+11,Cognitive Signal,no,-0.1911,non-molecular
+19,Neural Circuits,no,-0.1988,non-molecular
