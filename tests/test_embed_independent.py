@@ -40,6 +40,26 @@ def test_sample_extra_papers_zero_returns_empty():
     assert ei.sample_extra_papers(_pool(5), set(), n=0, seed=1) == []
 
 
+def test_merge_all_papers_keeps_verdicts_and_appends_rest():
+    # labelled recs carry verdict criteria; pool is the whole on-disk corpus
+    recs = [{"code_number": "1", "pdf_path": "pdfs/a.pdf", "criteria": {"two_worlds": "met"}}]
+    pool = [{"code_number": "1", "pdf_path": "pdfs/a.pdf"},   # dup of a labelled paper
+            {"code_number": "2", "pdf_path": "pdfs/b.pdf"},
+            {"code_number": "3", "pdf_path": "pdfs/c.pdf"}]
+    merged = ei.merge_all_papers(recs, pool)
+    # every on-disk paper is present exactly once, deduped by path
+    assert [m["pdf_path"] for m in merged] == ["pdfs/a.pdf", "pdfs/b.pdf", "pdfs/c.pdf"]
+    # the labelled paper keeps its criteria (drives ρ); the rest are bare
+    assert merged[0].get("criteria") == {"two_worlds": "met"}
+    assert "criteria" not in merged[1] and "criteria" not in merged[2]
+
+
+def test_merge_all_papers_is_idempotent_on_paths():
+    recs = [{"code_number": "1", "pdf_path": "pdfs/a.pdf"}]
+    pool = [{"code_number": "1", "pdf_path": "pdfs/a.pdf"}]
+    assert ei.merge_all_papers(recs, pool) == recs
+
+
 def test_build_controls_input_has_no_papers():
     # controls-only embed: no paper text extracted, just prototypes + controls so the
     # GPU run captures the 2 control vectors without re-embedding the whole corpus

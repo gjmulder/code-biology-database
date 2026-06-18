@@ -91,6 +91,23 @@ def sample_extra_papers(pool, existing_pids, n, seed=0):
     return candidates[: max(n, 0)]
 
 
+def merge_all_papers(recs, pool):
+    """Embed the **whole on-disk corpus**: keep the labelled verdict ``recs`` as-is (they
+    carry the criteria that drive ρ) and append every ``pool`` paper whose ``pdf_path`` is
+    not already present, as a bare ``{code_number, pdf_path}`` rec.
+
+    Deduped by path, order-stable (labelled first, then pool order). Unlike the seeded
+    ``--extra-sample`` draw this takes *all* downloaded papers — the molecular subselection
+    is done downstream on the persisted scores, not at embed time."""
+    merged = list(recs)
+    seen = {r["pdf_path"] for r in recs}
+    for p in pool:
+        if p["pdf_path"] not in seen:
+            seen.add(p["pdf_path"])
+            merged.append({"code_number": p["code_number"], "pdf_path": p["pdf_path"]})
+    return merged
+
+
 def build_input(recs, prototypes, controls, char_budget):
     papers = {}
     for r in recs:
@@ -506,6 +523,10 @@ def main():
     ap.add_argument("--csv", default="embedding_scores.csv")
     ap.add_argument("--md", default="report.md")
     ap.add_argument("--char-budget", type=int, default=120000)
+    ap.add_argument("--all-papers", action="store_true",
+                    help="embed the whole on-disk corpus (build_pool ∪ verdicts), not just "
+                         "the labelled set + --extra-sample draw; molecular subselection is "
+                         "done downstream on the persisted scores")
     ap.add_argument("--extra-sample", type=int, default=0,
                     help="randomly draw this many UNLABELLED papers from the downloaded "
                          "corpus (in addition to the verdict set) to widen the embedded "
@@ -589,7 +610,13 @@ def main():
     recs = load_verdicts(args.verdicts)
     log.info("loaded %d prior verdicts", len(recs))
 
-    if args.extra_sample > 0:
+    if args.all_papers:
+        pool = build_pool(args.codes_csv, args.pdf_dir)
+        before = len(recs)
+        recs = merge_all_papers(recs, pool)
+        log.info("--all-papers: %d labelled + %d more from a pool of %d = %d papers to embed",
+                 before, len(recs) - before, len(pool), len(recs))
+    elif args.extra_sample > 0:
         pool = build_pool(args.codes_csv, args.pdf_dir)
         extra = sample_extra_papers(pool, {r["pdf_path"] for r in recs},
                                     args.extra_sample, args.seed)
