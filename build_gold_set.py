@@ -37,10 +37,12 @@ import csv as _csv
 import logging
 import os
 import re
+from collections import Counter
 
 import numpy as np
 
 import embed_score as es
+from assign_topics import paper_dominant_topic
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
@@ -48,6 +50,11 @@ log = logging.getLogger("build_gold_set")
 
 CSV_PATH = "biological_codes.csv"
 GOLD_DIR = "gold"
+MOLECULAR_TOPICS_CSV = os.path.join(GOLD_DIR, "molecular_topics.csv")
+GOLD_SET_PATH = "gold_set.csv"
+# The git-tracked gold reference set: one row per labelled (code, paper) instance, merged
+# across phases. `source` namespaces each phase's rows so a re-run replaces only its own (§Phase 5).
+GOLD_FIELDS = ["code_number", "pdf_path", "polarity", "tier", "source", "criterion", "evidence"]
 # "Genetic code", its variants A–D and "Mitochondrial genetic code" — the molecular anchor.
 GENETIC_RE = re.compile(r"genetic\s+code", re.I)
 
@@ -191,6 +198,108 @@ def rank_topics(project, anchor, centroids):
     return rows
 
 
+# --- Phase 2: tier-2 gold positives (curated topic allowlist) --------------
+
+def load_molecular_topics(path=MOLECULAR_TOPICS_CSV):
+    """Curated allowlist → ``{topic_id: label}`` for the ``molecular == yes`` topics.
+
+    This is the **hand-confirmed** molecular cut (Phase 1's ranking is the audit, not the
+    definition — the gold positives must not be defined by the embedding molecularity score
+    they help validate). Membership is the key set; the label is reused for evidence."""
+    out = {}
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in _csv.DictReader(f):
+            if (row.get("molecular") or "").strip().lower() == "yes":
+                out[int(row["topic_id"])] = (row.get("label") or "").strip()
+    return out
+
+
+def dominant_topics(chunk_topics):
+    """``db.fetch_chunk_topics`` output → ``{pdf_path: dominant_topic_id}``.
+
+    Reuses :func:`assign_topics.paper_dominant_topic` (the §2.1 max-pool stratifier); papers
+    with no chunk assignments are dropped."""
+    out = {}
+    for pid, chunks in chunk_topics.items():
+        dom, _aff = paper_dominant_topic(chunks)
+        if dom is not None:
+            out[pid] = dom
+    return out
+
+
+def code_dominant_topic(pids, dominant_by_pid):
+    """A code's dominant topic = the **modal** per-paper dominant topic across its papers
+    (ties broken to the lowest ``topic_id`` for determinism). ``None`` if none of the code's
+    papers has a dominant topic."""
+    votes = [dominant_by_pid[p] for p in pids if p in dominant_by_pid]
+    if not votes:
+        return None
+    counts = Counter(votes)
+    top = max(counts.values())
+    return min(t for t, n in counts.items() if n == top)
+
+
+def molecular_codes(codes, dominant_by_pid, allowlist):
+    """Codes whose modal dominant topic ∈ ``allowlist`` → ``{code_number: (dominant_topic,
+    n_papers)}``.
+
+    ``codes`` maps ``pdf_path → code_number`` over the **embedded** corpus (``db.fetch_vectors``),
+    so ``n_papers`` counts only downloaded+embedded references. **Code 0** (the foundational
+    Code-Biology / Major texts) is the gold *root* — authorship, not a molecular-code reference —
+    and is excluded here; it is handled by the Phase 3 ``cite`` upgrade."""
+    by_code = {}
+    for pid, cn in codes.items():
+        by_code.setdefault(cn, []).append(pid)
+    out = {}
+    for cn, pids in by_code.items():
+        if cn == 0:
+            continue
+        dom = code_dominant_topic(pids, dominant_by_pid)
+        if dom in allowlist:
+            out[cn] = (dom, len(pids))
+    return out
+
+
+def tier2_positives(codes, mol_codes, code_names, topic_labels):
+    """Gold+ / tier-2 rows: **every** embedded paper of each molecular code (the code is
+    DB-endorsed molecular, so all its references are positives — §Phase 2). One ``GOLD_FIELDS``
+    dict per paper; ``evidence`` carries the code name + dominant topic for hand-auditing."""
+    by_code = {}
+    for pid, cn in codes.items():
+        by_code.setdefault(cn, []).append(pid)
+    rows = []
+    for cn, (dom, _n) in sorted(mol_codes.items()):
+        label = topic_labels.get(dom, str(dom))
+        evidence = f"{code_names.get(cn, '')} · topic {dom} {label}".strip()
+        for pid in sorted(by_code[cn]):
+            rows.append({"code_number": cn, "pdf_path": pid, "polarity": "pos",
+                         "tier": "2", "source": "db", "criterion": "all",
+                         "evidence": evidence})
+    return rows
+
+
+# --- gold_set.csv (git-tracked source of truth, merged across phases) ------
+
+def read_gold_set(path=GOLD_SET_PATH):
+    """Existing ``gold_set.csv`` → list of ``GOLD_FIELDS`` dicts (empty if absent)."""
+    if not os.path.exists(path):
+        return []
+    with open(path, newline="", encoding="utf-8") as f:
+        return [{k: row.get(k, "") for k in GOLD_FIELDS} for row in _csv.DictReader(f)]
+
+
+def merge_gold(existing, new_rows, sources):
+    """Replace every existing row whose ``source`` ∈ ``sources`` with ``new_rows``; keep the
+    rest in place. Lets one phase (here ``select`` → ``{"db"}``) refresh its own rows
+    idempotently without clobbering another phase's (``exclusion``/``implicit``/``barbieri-cite``)."""
+    kept = [r for r in existing if r.get("source") not in sources]
+    return kept + list(new_rows)
+
+
+def write_gold_set(path, rows):
+    _write_csv(path, GOLD_FIELDS, [[r[k] for k in GOLD_FIELDS] for r in rows])
+
+
 # --- CLI: select (Phase 1) -------------------------------------------------
 
 def _write_csv(path, header, rows):
@@ -209,6 +318,7 @@ def cmd_select(args):
         doc_vecs, poles, codes = db.fetch_vectors(conn, run=args.run)
         centroids = db.fetch_topic_centroids(conn, run=args.run)
         control_vecs = db.fetch_control_vectors(conn, run=args.run)
+        chunk_topics = db.fetch_chunk_topics(conn, run=args.run, method=args.method)
     finally:
         conn.close()
     names = load_code_names(args.csv)
@@ -252,6 +362,21 @@ def cmd_select(args):
                     "--run %s` to embed the seed, then re-run select for the artificial contrast",
                     list(ARTIFICIAL_SEED_KEYS), args.run, args.run)
 
+    # Phase 2 — tier-2 gold positives from the curated molecular allowlist (gated on it existing).
+    if os.path.exists(args.molecular_topics):
+        allow = load_molecular_topics(args.molecular_topics)
+        dom = dominant_topics(chunk_topics)
+        mol = molecular_codes(codes, dom, allow)
+        rows = tier2_positives(codes, mol, names, allow)
+        merged = merge_gold(read_gold_set(args.gold_set), rows, {"db"})
+        write_gold_set(args.gold_set, merged)
+        log.info("Phase 2: %d molecular codes (allowlist of %d topics) → %d tier-2 gold+ papers; "
+                 "merged into %s (%d total rows)",
+                 len(mol), len(allow), len(rows), args.gold_set, len(merged))
+    else:
+        log.warning("no molecular allowlist at %s — skipping Phase 2 tier-2 positives "
+                    "(curate it from gold/topic_ranking.csv first)", args.molecular_topics)
+
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
@@ -260,6 +385,10 @@ def main(argv=None):
     sel.add_argument("--run", default="baseline")
     sel.add_argument("--method", default="chunk")
     sel.add_argument("--csv", default=CSV_PATH)
+    sel.add_argument("--molecular-topics", default=MOLECULAR_TOPICS_CSV,
+                     help="curated molecular allowlist (Phase 2 tier-2 positives)")
+    sel.add_argument("--gold-set", default=GOLD_SET_PATH,
+                     help="git-tracked gold reference set to merge tier-2 positives into")
     sel.set_defaults(func=cmd_select)
     args = ap.parse_args(argv)
     args.func(args)

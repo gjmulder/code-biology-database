@@ -164,3 +164,86 @@ def test_rank_topics_orders_by_proximity_to_anchor():
     rows = bgs.rank_topics(project, anchor, centroids)
     assert [tid for tid, *_ in rows] == [1, 2]
     assert rows[0][2] > rows[1][2]
+
+
+# --- Phase 2: tier-2 gold positives (curated topic allowlist) --------------
+
+def test_load_molecular_topics_yes_only(tmp_path):
+    csv = tmp_path / "molecular_topics.csv"
+    csv.write_text(
+        "topic_id,label,molecular,molecularity,basis\n"
+        "3,Genetic Code,yes,0.41,anchor\n"
+        "10,Synthetic Code,yes,0.38,user-confirmed-borderline\n"
+        "8,Regulatory Code,no,0.08,excluded-borderline\n"
+        "19,Neural Circuits,no,-0.20,non-molecular\n",
+        encoding="utf-8")
+    mol = bgs.load_molecular_topics(str(csv))
+    assert set(mol) == {3, 10}
+    assert mol[3] == "Genetic Code" and mol[10] == "Synthetic Code"
+
+
+def test_dominant_topics_maxpools_per_paper():
+    # p1: topic 3 wins (sim .9 > .4); p2: single chunk topic 10; p3: no chunks → dropped.
+    chunk_topics = {
+        "p1.pdf": [(0, 3, 0.9), (1, 8, 0.4)],
+        "p2.pdf": [(0, 10, 0.7)],
+        "p3.pdf": [],
+    }
+    dom = bgs.dominant_topics(chunk_topics)
+    assert dom == {"p1.pdf": 3, "p2.pdf": 10}
+
+
+def test_code_dominant_topic_is_modal_tie_to_lowest():
+    dom = {"a": 3, "b": 3, "c": 10}          # code's papers: 3,3,10 → modal 3
+    assert bgs.code_dominant_topic(["a", "b", "c"], dom) == 3
+    dom2 = {"a": 10, "b": 3}                  # 1-1 tie → lowest topic_id
+    assert bgs.code_dominant_topic(["a", "b"], dom2) == 3
+    assert bgs.code_dominant_topic(["x"], {}) is None   # no dominant topic
+
+
+def test_molecular_codes_filters_by_allowlist_and_excludes_code0():
+    codes = {"g1.pdf": 12, "g2.pdf": 12,      # both topic 3 → molecular
+             "lang.pdf": 200,                  # topic 19 → not molecular
+             "seed.pdf": 0}                     # code 0 → always excluded
+    dom = {"g1.pdf": 3, "g2.pdf": 3, "lang.pdf": 19, "seed.pdf": 3}
+    allow = {3: "Genetic Code", 10: "Synthetic Code"}
+    mol = bgs.molecular_codes(codes, dom, allow)
+    assert set(mol) == {12}
+    assert mol[12] == (3, 2)                   # (dominant_topic, n_embedded_papers)
+
+
+def test_tier2_positives_one_row_per_embedded_paper():
+    codes = {"g1.pdf": 12, "g2.pdf": 12, "lang.pdf": 200}
+    mol = {12: (3, 2)}
+    names = {12: "Genetic code", 200: "Language code"}
+    labels = {3: "Genetic Code"}
+    rows = bgs.tier2_positives(codes, mol, names, labels)
+    assert [r["pdf_path"] for r in rows] == ["g1.pdf", "g2.pdf"]   # sorted, code 200 excluded
+    assert all(r["polarity"] == "pos" and r["tier"] == "2" and r["source"] == "db"
+               and r["criterion"] == "all" for r in rows)
+    assert all(r["code_number"] == 12 for r in rows)
+    assert "Genetic code" in rows[0]["evidence"] and "Genetic Code" in rows[0]["evidence"]
+
+
+def test_merge_gold_replaces_only_named_sources(tmp_path):
+    existing = [
+        {"code_number": 12, "pdf_path": "g1.pdf", "polarity": "pos", "tier": "2",
+         "source": "db", "criterion": "all", "evidence": "old"},
+        {"code_number": 99, "pdf_path": "x.pdf", "polarity": "neg", "tier": "hard",
+         "source": "exclusion", "criterion": "all", "evidence": "barbieri"},
+    ]
+    fresh = [{"code_number": 12, "pdf_path": "g2.pdf", "polarity": "pos", "tier": "2",
+              "source": "db", "criterion": "all", "evidence": "new"}]
+    merged = bgs.merge_gold(existing, fresh, {"db"})
+    # the hard-negative (exclusion) row survives; the stale db row is replaced by the fresh one
+    assert [r["pdf_path"] for r in merged] == ["x.pdf", "g2.pdf"]
+
+
+def test_gold_set_csv_roundtrip(tmp_path):
+    path = tmp_path / "gold_set.csv"
+    rows = [{"code_number": 12, "pdf_path": "g1.pdf", "polarity": "pos", "tier": "2",
+             "source": "db", "criterion": "all", "evidence": "Genetic code"}]
+    bgs.write_gold_set(str(path), rows)
+    back = bgs.read_gold_set(str(path))
+    assert back == [{k: str(rows[0][k]) for k in bgs.GOLD_FIELDS}]
+    assert bgs.read_gold_set(str(tmp_path / "absent.csv")) == []

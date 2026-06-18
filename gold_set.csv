@@ -1,0 +1,205 @@
+code_number,pdf_path,polarity,tier,source,criterion,evidence
+1,pdfs/10.1038_sj.emboj.7601954.pdf,pos,2,db,all,14-3-3 code · topic 18 Histonic Code
+19,pdfs/10.7554_eLife.110152.pdf,pos,2,db,all,Assembly code · topic 12 Ubiquitination Code
+20,pdfs/10.3389_fcell.2026.1762891.pdf,pos,2,db,all,ATG8 code · topic 12 Ubiquitination Code
+24,pdfs/www.jneurosci.org_content_35_6_2596.long.pdf,pos,2,db,all,Axon guidance code · topic 14 Hox Code
+51,pdfs/10.3389_fphgy.2023.1323899.pdf,pos,2,db,all,Cell wall code · topic 15 Signal Code
+52,pdfs/10.1007_s10577-012-9293-0.pdf,pos,2,db,all,Centromere code · topic 18 Histonic Code
+54,pdfs/10.1007_s12192-021-01240-2.pdf,pos,2,db,all,Chaperone code – A (general) · topic 5 Phosphorylation Code
+54,pdfs/10.1016_j.cstres.2024.01.003.pdf,pos,2,db,all,Chaperone code – A (general) · topic 5 Phosphorylation Code
+58,pdfs/10.1007_s00253-012-4208-8.pdf,pos,2,db,all,Chromatin code · topic 18 Histonic Code
+58,pdfs/10.1186_s12915-015-0141-5.pdf,pos,2,db,all,Chromatin code · topic 18 Histonic Code
+61,pdfs/rnajournal.cshlp.org_content_25_12_1714.long.pdf,pos,2,db,all,Circular ribosome code · topic 17 Prebiotic Code
+70,pdfs/10.1038_s41467-018-06185-2.pdf,pos,2,db,all,Collagen code · topic 2 Binding Code
+70,pdfs/10.1038_s41467-024-54046-y.pdf,pos,2,db,all,Collagen code · topic 2 Binding Code
+80,pdfs/10.1021_acsphyschemau.2c00041.pdf,pos,2,db,all,CRISPR code · topic 2 Binding Code
+83,pdfs/10.1261_rna.048181.114.pdf,pos,2,db,all,CTD code · topic 5 Phosphorylation Code
+99,pdfs/10.1186_s12864-019-6072-8.pdf,pos,2,db,all,Differentiation code · topic 18 Histonic Code
+102,pdfs/10.1038_s41598-026-44532-2.pdf,pos,2,db,all,DNA-binding code · topic 2 Binding Code
+102,pdfs/10.1371_journal.pcbi.1000989.pdf,pos,2,db,all,DNA-binding code · topic 2 Binding Code
+103,pdfs/10.1038_s41467-020-16722-7.pdf,pos,2,db,all,DNA damage code · topic 18 Histonic Code
+105,pdfs/10.1021_acschembio.9b00532.pdf,pos,2,db,all,Domain code · topic 10 Synthetic Code
+112,pdfs/10.1038_emboj.2011.266.pdf,pos,2,db,all,Endocytic code · topic 2 Binding Code
+114,pdfs/10.1007_s42994-023-00101-z.pdf,pos,2,db,all,Epigenetic code – A (general) · topic 18 Histonic Code
+114,pdfs/10.15252_msb.20167332.pdf,pos,2,db,all,Epigenetic code – A (general) · topic 18 Histonic Code
+114,pdfs/10.1530_erc-12-0338.pdf,pos,2,db,all,Epigenetic code – A (general) · topic 18 Histonic Code
+114,pdfs/10.15430_JCP.2017.22.4.211.pdf,pos,2,db,all,Epigenetic code – A (general) · topic 18 Histonic Code
+114,pdfs/10.3389_fonc.2024.1499950.pdf,pos,2,db,all,Epigenetic code – A (general) · topic 18 Histonic Code
+115,pdfs/10.3389_fdmed.2021.807046.pdf,pos,2,db,all,Epigenetic code – B (stem cell) · topic 18 Histonic Code
+117,pdfs/10.1186_s13059-025-03808-y.pdf,pos,2,db,all,Epigenetic code – D (miscellaneous) · topic 18 Histonic Code
+117,pdfs/10.1371_journal.pone.0043880.pdf,pos,2,db,all,Epigenetic code – D (miscellaneous) · topic 18 Histonic Code
+117,pdfs/10.3389_fcell.2025.1666435.pdf,pos,2,db,all,Epigenetic code – D (miscellaneous) · topic 18 Histonic Code
+117,pdfs/www.nature.com_articles_s41467-024-45295-y.pdf,pos,2,db,all,Epigenetic code – D (miscellaneous) · topic 18 Histonic Code
+139,pdfs/10.1186_1745-6150-6-14.pdf,pos,2,db,all,Genetic code – B (research) · topic 3 Genetic Code
+139,pdfs/jopir.in_index.php_journals_article_view_77.pdf,pos,2,db,all,Genetic code – B (research) · topic 3 Genetic Code
+139,pdfs/www.ias.ac.in_article_fulltext_jbsc_047_0049.pdf,pos,2,db,all,Genetic code – B (research) · topic 3 Genetic Code
+140,pdfs/10.1021_acscatal.9b05129.pdf,pos,2,db,all,Genetic Code – C (expanded) · topic 10 Synthetic Code
+140,pdfs/10.1038_s41467-023-40529-x.pdf,pos,2,db,all,Genetic Code – C (expanded) · topic 10 Synthetic Code
+140,pdfs/10.1038_s41467-025-63679-6.pdf,pos,2,db,all,Genetic Code – C (expanded) · topic 10 Synthetic Code
+140,pdfs/10.2533_chimia.2024.22.pdf,pos,2,db,all,Genetic Code – C (expanded) · topic 10 Synthetic Code
+140,pdfs/10.3389_fchem.2022.958433_full.pdf,pos,2,db,all,Genetic Code – C (expanded) · topic 10 Synthetic Code
+140,pdfs/10.3389_fgene.2024.1373250.pdf,pos,2,db,all,Genetic Code – C (expanded) · topic 10 Synthetic Code
+140,pdfs/10.3389_fgene.2024.1420331.pdf,pos,2,db,all,Genetic Code – C (expanded) · topic 10 Synthetic Code
+141,pdfs/10.1002_j.1460-2075.1996.tb00581.x.pdf,pos,2,db,all,Genetic code – D (alternative) · topic 3 Genetic Code
+141,pdfs/10.1016_j.crvi.2011.05.008.pdf,pos,2,db,all,Genetic code – D (alternative) · topic 3 Genetic Code
+141,pdfs/10.1016_j.febslet.2009.11.066.pdf,pos,2,db,all,Genetic code – D (alternative) · topic 3 Genetic Code
+141,pdfs/10.1038_nrmicro3073.pdf,pos,2,db,all,Genetic code – D (alternative) · topic 3 Genetic Code
+141,pdfs/10.1073_pnas.1302094110.pdf,pos,2,db,all,Genetic code – D (alternative) · topic 3 Genetic Code
+141,pdfs/10.1186_1471-2148-10-327.pdf,pos,2,db,all,Genetic code – D (alternative) · topic 3 Genetic Code
+141,pdfs/10.1371_journal.pgen.1000565.pdf,pos,2,db,all,Genetic code – D (alternative) · topic 3 Genetic Code
+141,pdfs/10.3389_fmicb.2022.1007832_full.pdf,pos,2,db,all,Genetic code – D (alternative) · topic 3 Genetic Code
+142,pdfs/10.1007_s11427-013-4544-7.pdf,pos,2,db,all,"Genetic code, second · topic 3 Genetic Code"
+142,pdfs/10.1038_s41467-019-12916-w.pdf,pos,2,db,all,"Genetic code, second · topic 3 Genetic Code"
+142,pdfs/10.21275_SR251120184517.pdf,pos,2,db,all,"Genetic code, second · topic 3 Genetic Code"
+144,pdfs/10.1038_s41598-022-06723-5.pdf,pos,2,db,all,Genome regulatory code · topic 10 Synthetic Code
+146,pdfs/10.1038_srep22495.pdf,pos,2,db,all,Ghrelin code · topic 5 Phosphorylation Code
+149,pdfs/10.3389_fimmu.2023.1120434_full.pdf,pos,2,db,all,Glycomic code · topic 7 Chemical Codes
+150,pdfs/10.20892_j.issn.2095-3941.2024.0408.pdf,pos,2,db,all,Glycosylation code · topic 7 Chemical Codes
+150,pdfs/10.3724_abbs.2024123.pdf,pos,2,db,all,Glycosylation code · topic 7 Chemical Codes
+150,pdfs/www.nature.com_articles_s42003-021-02934-0.pdf,pos,2,db,all,Glycosylation code · topic 7 Chemical Codes
+153,pdfs/10.1186_s12964-022-00832-4.pdf,pos,2,db,all,GRP code · topic 5 Phosphorylation Code
+155,pdfs/10.3389_fendo.2025.1553655.pdf,pos,2,db,all,Gut code · topic 10 Synthetic Code
+162,pdfs/10.1007_s10739-022-09691-8.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/10.1038_s41392-024-01878-1.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/10.1038_s41467-022-34152-5.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/10.1038_s41598-021-82539-z.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/10.1038_sj.emboj.7601856.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/10.1038_sj.embor.7400391.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/10.1073_pnas.2409167121.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/10.1093_emboj_cdg326.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/10.1099_mgen.0.000856.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/10.1186_1471-2164-13-301.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/10.1186_s12864-018-5274-9.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/10.1186_s13059-026-04011-3.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/10.1186_s13072-017-0139-z.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/10.1186_s13148-017-0398-3.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/10.3389_fcell.2021.739780_full.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/10.3389_fendo.2014.00155_full.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/10.5483_BMBRep.2022.55.3.004.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/10.64898_2026.01.23.701327.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/www.jneurosci.org_content_29_41_13079.long.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/www.nature.com_articles_srep42551.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+162,pdfs/www.oncotarget.com_article_435_text.pdf,pos,2,db,all,Histone code – A (general) · topic 18 Histonic Code
+165,pdfs/www.nature.com_articles_cddis2017468.pdf,pos,2,db,all,Histone code – D (readers) · topic 18 Histonic Code
+165,pdfs/www.oncotarget.com_article_3000_text.pdf,pos,2,db,all,Histone code – D (readers) · topic 18 Histonic Code
+169,pdfs/10.15252_embj.201489244.pdf,pos,2,db,all,Histone sub-code · topic 5 Phosphorylation Code
+173,pdfs/10.1007_s00418-025-02362-9.pdf,pos,2,db,all,HOX code – A (general) · topic 14 Hox Code
+173,pdfs/10.1007_s004270050204.pdf,pos,2,db,all,HOX code – A (general) · topic 14 Hox Code
+173,pdfs/10.1371_journal.pone.0000153.pdf,pos,2,db,all,HOX code – A (general) · topic 14 Hox Code
+174,pdfs/10.1371_journal.pgen.1004245.pdf,pos,2,db,all,HOX code – B (pattern) · topic 14 Hox Code
+174,pdfs/10.1371_journal.pgen.1004929.pdf,pos,2,db,all,HOX code – B (pattern) · topic 14 Hox Code
+175,pdfs/www.nature.com_articles_s41598-021-82472-1.pdf,pos,2,db,all,Hox code -C (disease) · topic 14 Hox Code
+177,pdfs/10.3389_fnana.2015.00046.pdf,pos,2,db,all,Hypothalamic code · topic 14 Hox Code
+178,pdfs/www.jneurosci.org_content_28_25_6439.long.pdf,pos,2,db,all,Identity code · topic 14 Hox Code
+181,pdfs/10.3389_fnmol.2015.00033_full.pdf,pos,2,db,all,Importin code · topic 5 Phosphorylation Code
+191,pdfs/10.1038_s42003-026-09974-4.pdf,pos,2,db,all,IRBIT code · topic 5 Phosphorylation Code
+194,pdfs/10.3389_fgene.2019.01082_full.pdf,pos,2,db,all,Karyotype code · topic 1 Genomic Code
+197,pdfs/rnajournal.cshlp.org_content_25_5_539.long.pdf,pos,2,db,all,Kinase code · topic 5 Phosphorylation Code
+198,pdfs/10.1007_s13402-025-01083-4.pdf,pos,2,db,all,Lactylation code · topic 18 Histonic Code
+198,pdfs/10.3389_fimmu.2021.688910.pdf,pos,2,db,all,Lactylation code · topic 18 Histonic Code
+205,pdfs/10.1016_j.ceb.2023.102203.pdf,pos,2,db,all,Lipid code · topic 2 Binding Code
+205,pdfs/10.1073_pnas.1912684117.pdf,pos,2,db,all,Lipid code · topic 2 Binding Code
+205,pdfs/10.1186_s12944-025-02612-8.pdf,pos,2,db,all,Lipid code · topic 2 Binding Code
+214,pdfs/10.1038_embor.2011.2.pdf,pos,2,db,all,Meiosis codes · topic 1 Genomic Code
+217,pdfs/10.1007_s00018-017-2478-0.pdf,pos,2,db,all,Membrane code · topic 2 Binding Code
+217,pdfs/10.1371_journal.pcbi.1009424.pdf,pos,2,db,all,Membrane code · topic 2 Binding Code
+218,pdfs/10.3389_fnmol.2022.845516_full.pdf,pos,2,db,all,Memory code · topic 18 Histonic Code
+218,pdfs/learnmem.cshlp.org_content_13_3_241.pdf,pos,2,db,all,Memory code · topic 18 Histonic Code
+222,pdfs/10.3389_fphys.2018.00031_full.pdf,pos,2,db,all,Metabolic code · topic 16 Molecular Codes
+222,pdfs/match.pmf.kg.ac.rs_electronic_versions_Match80_n3_match80n3_587-604.pdf.pdf,pos,2,db,all,Metabolic code · topic 16 Molecular Codes
+231,pdfs/www.nature.com_articles_srep21907.pdf,pos,2,db,all,Mirror code · topic 2 Binding Code
+232,pdfs/10.1007_s00239-006-0284-7.pdf,pos,2,db,all,Mitochondrial genetic code · topic 3 Genetic Code
+233,pdfs/10.2741_3360.pdf,pos,2,db,all,Mitosis codes · topic 1 Genomic Code
+233,pdfs/www.oncotarget.com_article_5108.pdf,pos,2,db,all,Mitosis codes · topic 1 Genomic Code
+239,pdfs/www.nature.com_articles_s41598-017-14170-w.pdf,pos,2,db,all,Morphogenetic code · topic 14 Hox Code
+261,pdfs/haematologica.org_article_view_5395.pdf,pos,2,db,all,Niche codes · topic 2 Binding Code
+262,pdfs/10.18632_oncotarget.27683.pdf,pos,2,db,all,NKL code · topic 14 Hox Code
+265,pdfs/10.1039_d6sc00250a.pdf,pos,2,db,all,Non-ribosomal code · topic 10 Synthetic Code
+270,pdfs/www.nature.com_articles_ncomms12861.pdf,pos,2,db,all,Nucleoprotein code · topic 1 Genomic Code
+271,pdfs/10.1371_journal.pgen.1000250.pdf,pos,2,db,all,Nucleosome code · topic 1 Genomic Code
+272,pdfs/10.1038_s41589-025-02096-8.pdf,pos,2,db,all,Nucleotide code · topic 2 Binding Code
+285,pdfs/10.32607_actanaturae.11089.pdf,pos,2,db,all,PAR code · topic 16 Molecular Codes
+286,pdfs/10.3389_fcell.2026.1740922.pdf,pos,2,db,all,Palmitoylation code · topic 12 Ubiquitination Code
+288,pdfs/10.3389_fmed.2025.1504736.pdf,pos,2,db,all,Persistence code · topic 18 Histonic Code
+293,pdfs/10.3389_fncel.2020.00254.pdf,pos,2,db,all,Phenotype code · topic 2 Binding Code
+299,pdfs/10.1038_s41467-023-36035-9.pdf,pos,2,db,all,Phosphorylation code · topic 5 Phosphorylation Code
+299,pdfs/10.1186_s12915-024-01978-y.pdf,pos,2,db,all,Phosphorylation code · topic 5 Phosphorylation Code
+299,pdfs/10.3389_fcell.2022.846927_full.pdf,pos,2,db,all,Phosphorylation code · topic 5 Phosphorylation Code
+299,pdfs/10.3389_fnins.2018.00044_full.pdf,pos,2,db,all,Phosphorylation code · topic 5 Phosphorylation Code
+299,pdfs/erc.bioscientifica.com_view_journals_erc_17_3_589.xml.pdf,pos,2,db,all,Phosphorylation code · topic 5 Phosphorylation Code
+299,pdfs/www.nature.com_articles_cr201310.pdf,pos,2,db,all,Phosphorylation code · topic 5 Phosphorylation Code
+301,pdfs/10.1126_scisignal.aay2940.pdf,pos,2,db,all,PI3K code · topic 15 Signal Code
+305,pdfs/10.1371_journal.pbio.0020035.pdf,pos,2,db,all,Polyketide code · topic 10 Synthetic Code
+308,pdfs/10.1038_msb.2012.33.pdf,pos,2,db,all,Posttranslational codes · topic 5 Phosphorylation Code
+308,pdfs/10.3389_fnmol.2014.00069_full.pdf,pos,2,db,all,Posttranslational codes · topic 5 Phosphorylation Code
+310,pdfs/10.1371_journal.pone.0104751.pdf,pos,2,db,all,Prion code · topic 2 Binding Code
+310,pdfs/10.3389_fncel.2020.00254_full.pdf,pos,2,db,all,Prion code · topic 2 Binding Code
+312,pdfs/10.1038_s41592-026-03086-x.pdf,pos,2,db,all,Protein code · topic 2 Binding Code
+313,pdfs/10.1371_journal.pone.0125098.pdf,pos,2,db,all,Protein folding code · topic 2 Binding Code
+313,pdfs/pubs.rsc.org_en_content_articlelanding_2015_CC_C5CC07136D.pdf,pos,2,db,all,Protein folding code · topic 2 Binding Code
+314,pdfs/10.15252_msb.202311587.pdf,pos,2,db,all,Protein-protein interaction code · topic 2 Binding Code
+315,pdfs/10.1186_s12915-024-01849-6.pdf,pos,2,db,all,Proteolipid code · topic 2 Binding Code
+318,pdfs/10.1038_s41467-024-48513-9.pdf,pos,2,db,all,QTY code · topic 2 Binding Code
+318,pdfs/www.cambridge.org_core_journals_qrb-discovery_article_qty-codedesigned-watersoluble-fcfusion-cytokine-receptors-bind-to-their-respective-ligands_6F70C.pdf,pos,2,db,all,QTY code · topic 2 Binding Code
+318,pdfs/www.nature.com_articles_s41598-020-77659-x.pdf,pos,2,db,all,QTY code · topic 2 Binding Code
+321,pdfs/10.1038_s41545-024-00305-w.pdf,pos,2,db,all,Quorum sensing code · topic 2 Binding Code
+321,pdfs/www.codebiology.org_conferences_Guimaraes2023_Code-Biology-Guimar_C3_A3es-2023-Abstracts.pdf.pdf,pos,2,db,all,Quorum sensing code · topic 2 Binding Code
+322,pdfs/www.nature.com_articles_s41556-022-00976-y.pdf,pos,2,db,all,Rag GTPase dimer code · topic 16 Molecular Codes
+325,pdfs/10.1371_journal.pone.0213278.pdf,pos,2,db,all,Recombination codes · topic 1 Genomic Code
+326,pdfs/10.1371_journal.pone.0149724.pdf,pos,2,db,all,Regeneration code · topic 14 Hox Code
+329,pdfs/10.1038_emboj.2009.180.pdf,pos,2,db,all,Repair code · topic 18 Histonic Code
+329,pdfs/10.3389_fgene.2022.993889_full.pdf,pos,2,db,all,Repair code · topic 18 Histonic Code
+329,pdfs/www.nature.com_articles_cr201014.pdf,pos,2,db,all,Repair code · topic 18 Histonic Code
+335,pdfs/rnajournal.cshlp.org_content_16_1_141.long.pdf,pos,2,db,all,RNA code -C (operational) · topic 16 Molecular Codes
+338,pdfs/10.1038_s12276-025-01633-8.pdf,pos,2,db,all,RNA editing/modification code · topic 7 Chemical Codes
+338,pdfs/10.1038_s41392-024-02056-z.pdf,pos,2,db,all,RNA editing/modification code · topic 7 Chemical Codes
+338,pdfs/10.1371_journal.pgen.1010733.pdf,pos,2,db,all,RNA editing/modification code · topic 7 Chemical Codes
+338,pdfs/10.3389_fimmu.2025.1563150.pdf,pos,2,db,all,RNA editing/modification code · topic 7 Chemical Codes
+340,pdfs/10.1007_s00239-009-9270-1.pdf,pos,2,db,all,RNA recognition code · topic 2 Binding Code
+340,pdfs/10.1371_journal.pcbi.1010859.pdf,pos,2,db,all,RNA recognition code · topic 2 Binding Code
+340,pdfs/10.1371_journal.pgen.1002910.pdf,pos,2,db,all,RNA recognition code · topic 2 Binding Code
+340,pdfs/10.1371_journal.pone.0057286.pdf,pos,2,db,all,RNA recognition code · topic 2 Binding Code
+364,pdfs/10.1038_s44318-026-00743-x.pdf,pos,2,db,all,Sperm code · topic 18 Histonic Code
+364,pdfs/10.3389_fcell.2025.1657744.pdf,pos,2,db,all,Sperm code · topic 18 Histonic Code
+375,pdfs/10.1007_s00418-016-1521-9.pdf,pos,2,db,all,Sugar code · topic 7 Chemical Codes
+375,pdfs/10.1007_s13361-018-1912-3.pdf,pos,2,db,all,Sugar code · topic 7 Chemical Codes
+375,pdfs/10.1055_s-0038-1676968.pdf,pos,2,db,all,Sugar code · topic 7 Chemical Codes
+375,pdfs/10.1089_omi.2019.0220.pdf,pos,2,db,all,Sugar code · topic 7 Chemical Codes
+375,pdfs/10.3389_fimmu.2015.00025_full.pdf,pos,2,db,all,Sugar code · topic 7 Chemical Codes
+375,pdfs/10.3389_fpls.2021.640919_full.pdf,pos,2,db,all,Sugar code · topic 7 Chemical Codes
+375,pdfs/www.jstage.jst.go.jp_article_ahc_54_2_54_21-00017__article.pdf,pos,2,db,all,Sugar code · topic 7 Chemical Codes
+375,pdfs/www.nature.com_articles_cr2017116.pdf,pos,2,db,all,Sugar code · topic 7 Chemical Codes
+376,pdfs/10.3389_fmolb.2021.671458_full.pdf,pos,2,db,all,Sulfation code · topic 7 Chemical Codes
+383,pdfs/10.1038_s41467-021-25370-4.pdf,pos,2,db,all,TALE code · topic 14 Hox Code
+383,pdfs/10.1371_journal.pone.0246603.pdf,pos,2,db,all,TALE code · topic 14 Hox Code
+384,pdfs/10.1371_journal.pcbi.1001008.pdf,pos,2,db,all,Targeting code · topic 18 Histonic Code
+389,pdfs/www.nature.com_articles_s41467-022-32921-w.pdf,pos,2,db,all,Terpene code · topic 10 Synthetic Code
+403,pdfs/www.nature.com_articles_s41467-022-34664-0.pdf,pos,2,db,all,Translation code · topic 16 Molecular Codes
+407,pdfs/10.1038_s41467-023-40354-2.pdf,pos,2,db,all,tRNA code · topic 16 Molecular Codes
+407,pdfs/10.1186_s12863-020-0812-2.pdf,pos,2,db,all,tRNA code · topic 16 Molecular Codes
+407,pdfs/10.17615_m4jw-xk46.pdf,pos,2,db,all,tRNA code · topic 16 Molecular Codes
+407,pdfs/10.3389_fmicb.2024.1415100.pdf,pos,2,db,all,tRNA code · topic 16 Molecular Codes
+408,pdfs/10.1038_s41586-021-04204-9.pdf,pos,2,db,all,Tubulin code · topic 1 Genomic Code
+408,pdfs/10.3389_fcell.2022.837486.pdf,pos,2,db,all,Tubulin code · topic 1 Genomic Code
+408,pdfs/10.3389_fcell.2022.901999_full.pdf,pos,2,db,all,Tubulin code · topic 1 Genomic Code
+411,pdfs/10.1038_s41467-022-35608-4.pdf,pos,2,db,all,Ubiquitin code · topic 12 Ubiquitination Code
+411,pdfs/10.1186_1747-1028-2-11.pdf,pos,2,db,all,Ubiquitin code · topic 12 Ubiquitination Code
+411,pdfs/10.3389_fimmu.2019.02648_full.pdf,pos,2,db,all,Ubiquitin code · topic 12 Ubiquitination Code
+411,pdfs/10.3724_abbs.2025232.pdf,pos,2,db,all,Ubiquitin code · topic 12 Ubiquitination Code
+411,pdfs/www.nature.com_articles_s41467-025-57873-9.pdf,pos,2,db,all,Ubiquitin code · topic 12 Ubiquitination Code
+423,pdfs/10.1007_978-3-319-61569-1_5.pdf,pos,2,db,all,Viral code · topic 16 Molecular Codes
+428,pdfs/10.1007_s00239-020-09985-7.pdf,pos,2,db,all,Wobbling code · topic 3 Genetic Code
+428,pdfs/10.1371_journal.pgen.1003076.pdf,pos,2,db,all,Wobbling code · topic 3 Genetic Code
+432,pdfs/10.18632_oncoscience.606.pdf,pos,2,db,all,Zip code -A (DNA) · topic 2 Binding Code
+432,pdfs/10.3389_fonc.2024.1288724.pdf,pos,2,db,all,Zip code -A (DNA) · topic 2 Binding Code
+433,pdfs/10.1007_s12079-009-0039-5.pdf,pos,2,db,all,Zip code -B (RNA) · topic 16 Molecular Codes
+433,pdfs/10.1038_emboj.2011.389.pdf,pos,2,db,all,Zip code -B (RNA) · topic 16 Molecular Codes
+433,pdfs/10.1261_rna.029207.111.pdf,pos,2,db,all,Zip code -B (RNA) · topic 16 Molecular Codes
+433,pdfs/10.1261_rna.043208.113.pdf,pos,2,db,all,Zip code -B (RNA) · topic 16 Molecular Codes
+433,pdfs/10.1261_rna.079615.123.pdf,pos,2,db,all,Zip code -B (RNA) · topic 16 Molecular Codes
+433,pdfs/10.1523_jneurosci.0499-10.2010.pdf,pos,2,db,all,Zip code -B (RNA) · topic 16 Molecular Codes
+433,pdfs/10.1523_jneurosci.23-32-10433.2003.pdf,pos,2,db,all,Zip code -B (RNA) · topic 16 Molecular Codes
+433,pdfs/10.1523_jneurosci.2387-10.2011.pdf,pos,2,db,all,Zip code -B (RNA) · topic 16 Molecular Codes
+433,pdfs/10.3389_fonc.2023.1266397.pdf,pos,2,db,all,Zip code -B (RNA) · topic 16 Molecular Codes
+434,pdfs/10.1088_1478-3975_aba5e5_meta.pdf,pos,2,db,all,Zip code -C (Protein) · topic 12 Ubiquitination Code
+434,pdfs/10.1128_mBio.02092-20.pdf,pos,2,db,all,Zip code -C (Protein) · topic 12 Ubiquitination Code
