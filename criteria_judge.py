@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import re
+import difflib
 import unicodedata
 
 import pdf_text
@@ -128,6 +129,27 @@ def _norm_ws(s):
     # defeat a quote the model rendered in plain ASCII (label-quality fix, CLAUDE.md §6/§9).
     s = unicodedata.normalize("NFKC", s)
     return re.sub(r"\s+", " ", s).strip().lower()
+
+
+def quote_coverage(quote, chunk):
+    """Diagnostic: how much of ``quote`` is verbatim-grounded in ``chunk``, allowing the
+    quote to be assembled from *multiple non-contiguous* spans of the chunk.
+
+    Returns ``(coverage, longest_block)``: ``coverage`` is the fraction of the
+    whitespace/ligature-normalised quote's characters that lie in a matching block against
+    the normalised chunk (1.0 = every character is drawn verbatim from the chunk, even if
+    spliced from separate sentences); ``longest_block`` is the longest single contiguous
+    matching run, in characters. A spliced-but-real quote scores coverage≈1.0 with a long
+    block; a paraphrase drops coverage; a fabrication has only short blocks. **Diagnostic
+    only — it does NOT gate** (the CLAUDE.md §9 grounding gate stays strict-verbatim)."""
+    q = _norm_ws(quote)
+    if not q:
+        return 0.0, 0
+    sm = difflib.SequenceMatcher(a=q, b=_norm_ws(chunk), autojunk=False)
+    blocks = sm.get_matching_blocks()  # trailing sentinel has size 0
+    matched = sum(b.size for b in blocks)
+    longest = max((b.size for b in blocks), default=0)
+    return matched / len(q), longest
 
 
 def grounding_gate(verdict, source_text):

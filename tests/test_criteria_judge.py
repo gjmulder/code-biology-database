@@ -285,6 +285,42 @@ def test_graded_grounding_gate_keeps_positive_across_ligature_artifact():
     assert not gated.get("grounding_failed")
 
 
+# --- quote_coverage (multi-span fuzzy grounding diagnostic) ----------------
+
+def test_quote_coverage_contiguous_verbatim_is_full():
+    chunk = "Alpha beta gamma. Middle filler. Delta epsilon zeta."
+    cov, longest = cj.quote_coverage("Alpha beta gamma.", chunk)
+    assert cov == 1.0
+    assert longest == len(cj._norm_ws("Alpha beta gamma."))
+
+
+def test_quote_coverage_spliced_noncontiguous_sentences_is_full():
+    # two real sentences from the same chunk, the middle dropped — the relaxation we want
+    chunk = "Alpha beta gamma. Middle filler text. Delta epsilon zeta."
+    cov, longest = cj.quote_coverage("Alpha beta gamma. Delta epsilon zeta.", chunk)
+    assert cov >= 0.95            # every char is drawn from the chunk
+    assert longest >= len("delta epsilon zeta.")  # a whole real clause survives intact
+
+
+def test_quote_coverage_paraphrase_is_partial():
+    chunk = "the mapping between two independent worlds is conventional"
+    cov, longest = cj.quote_coverage(
+        "the mapping connecting two separate worlds is arbitrary", chunk)
+    assert cov < 0.8              # reworded words aren't in the chunk
+    assert longest < len(cj._norm_ws(chunk))
+
+
+def test_quote_coverage_fabrication_has_short_longest_block():
+    # words individually present but never as a real run -> low coverage, tiny longest block
+    chunk = "the cat sat on the mat while the dog ran in the park"
+    cov, longest = cj.quote_coverage("quantum entanglement decoheres rapidly", chunk)
+    assert longest < 10
+
+
+def test_quote_coverage_empty_quote_is_zero():
+    assert cj.quote_coverage("", "anything") == (0.0, 0)
+
+
 # --- graded aggregation (per paper per criterion) -------------------------
 
 def _cs(agreement, confidence=1.0):
