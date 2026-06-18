@@ -351,6 +351,59 @@ def test_code0_positives_only_code_zero_as_tier1():
                and r["source"] == "code0" and r["criterion"] == "all" for r in rows)
 
 
+def test_load_topic_labels_all_rows(tmp_path):
+    csv = tmp_path / "molecular_topics.csv"
+    csv.write_text(
+        "topic_id,label,molecular,molecularity,basis\n"
+        "3,Genetic Code,yes,0.41,anchor\n"
+        "19,Neural Circuits,no,-0.20,non-molecular\n"
+        "bad,Garbage,no,0,junk\n",            # non-int topic_id is skipped
+        encoding="utf-8")
+    labels = bgs.load_topic_labels(str(csv))
+    assert labels == {3: "Genetic Code", 19: "Neural Circuits"}   # both yes and no, junk dropped
+
+
+def test_molecular_member_pids_union_of_molecular_codes():
+    codes = {"g1.pdf": 12, "g2.pdf": 12, "sug.pdf": 30, "lang.pdf": 200}
+    mol = {12: (3, 2), 30: (16, 1)}            # genetic + sugar are molecular; language is not
+    assert bgs.molecular_member_pids(codes, mol) == {"g1.pdf", "g2.pdf", "sug.pdf"}
+
+
+# --- Phase 4: soft negatives (implicit) ------------------------------------
+
+def test_implicit_negatives_non_molecular_topic_and_not_molecular_member():
+    codes = {"g1.pdf": 12, "lang.pdf": 200, "neur.pdf": 202}
+    dom = {"g1.pdf": 3, "lang.pdf": 4, "neur.pdf": 19}   # g1 molecular topic, others not
+    allow = {3: "Genetic Code", 16: "Molecular Codes"}
+    mol = {12: (3, 1)}                                    # only the genetic code is molecular
+    labels = {3: "Genetic Code", 4: "Language Code", 19: "Neural Circuits"}
+    rows = bgs.implicit_negatives(codes, dom, allow, mol, labels)
+    assert [r["pdf_path"] for r in rows] == ["lang.pdf", "neur.pdf"]   # sorted; g1 (molecular) out
+    assert all(r["polarity"] == "neg" and r["tier"] == "soft" and r["source"] == "implicit"
+               and r["criterion"] == "all" for r in rows)
+    lang = next(r for r in rows if r["pdf_path"] == "lang.pdf")
+    assert lang["code_number"] == 200 and "Language Code" in lang["evidence"]
+
+
+def test_implicit_negatives_excludes_code0_members_and_labelled():
+    codes = {"seed.pdf": 0, "lang.pdf": 200, "mem.pdf": 201, "done.pdf": 202}
+    dom = {"seed.pdf": 4, "lang.pdf": 4, "mem.pdf": 4, "done.pdf": 4}   # all non-molecular topic 4
+    allow = {3: "Genetic Code"}
+    mol = {201: (3, 1)}                       # code 201 IS molecular → mem.pdf is a member (excluded)
+    labels = {4: "Language Code"}
+    rows = bgs.implicit_negatives(codes, dom, allow, mol, labels,
+                                  exclude_pids={"done.pdf"})
+    # seed.pdf (code 0), mem.pdf (molecular member), done.pdf (already labelled) all excluded
+    assert [r["pdf_path"] for r in rows] == ["lang.pdf"]
+
+
+def test_implicit_negatives_skips_papers_without_dominant_topic():
+    codes = {"a.pdf": 200, "b.pdf": 201}
+    dom = {"a.pdf": 4}                         # b.pdf has no dominant topic → skipped
+    rows = bgs.implicit_negatives(codes, dom, {3: "Genetic"}, {}, {4: "Language Code"})
+    assert [r["pdf_path"] for r in rows] == ["a.pdf"]
+
+
 def test_select_merge_reclaims_barbieri_cite_rows():
     # after a cite pass some db rows became barbieri-cite; re-running select must reclaim BOTH
     # so the rebuilt tier-2 set never duplicates an upgraded paper.

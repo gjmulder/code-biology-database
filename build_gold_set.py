@@ -271,6 +271,20 @@ def molecular_codes(codes, dominant_by_pid, allowlist):
     return out
 
 
+def load_topic_labels(path=MOLECULAR_TOPICS_CSV):
+    """All 24 topics → ``{topic_id: label}`` (both ``yes`` and ``no`` rows), for evidence
+    strings on the non-molecular side (where :func:`load_molecular_topics` has no entry)."""
+    out = {}
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in _csv.DictReader(f):
+            try:
+                tid = int(row["topic_id"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            out[tid] = (row.get("label") or "").strip()
+    return out
+
+
 def tier2_positives(codes, mol_codes, code_names, topic_labels):
     """Gold+ / tier-2 rows: **every** embedded paper of each molecular code (the code is
     DB-endorsed molecular, so all its references are positives — §Phase 2). One ``GOLD_FIELDS``
@@ -453,6 +467,44 @@ def code0_positives(codes):
             for pid, cn in sorted(codes.items()) if cn == 0]
 
 
+# --- Phase 4: soft negatives (implicit) ------------------------------------
+#
+# Statistical-tractability negatives: an embedded paper is an **implicit gold−** when it is
+# (a) not a member of any molecular code (so the DB never endorses it as molecular), and (b) its
+# own dominant scientometric topic is non-molecular. Lower tier ("soft") than the authority-grounded
+# hard negatives (Barbieri's explicit exclusions) — these are inferred, not stated. Code-0 papers
+# (positives) and anything already labelled by an earlier phase are excluded so a soft label never
+# conflicts with a positive or a hard negative.
+
+def molecular_member_pids(codes, mol_codes):
+    """Every embedded ``pdf_path`` belonging to a molecular code — the gold-positive paper set
+    (``codes``: ``pdf_path → code_number``; ``mol_codes``: :func:`molecular_codes` output)."""
+    return {pid for pid, cn in codes.items() if cn in mol_codes}
+
+
+def implicit_negatives(codes, dominant_by_pid, allowlist, mol_codes, topic_labels,
+                       exclude_pids=()):
+    """Soft gold− rows: embedded papers with a **non-molecular dominant topic** that are **not**
+    members of any molecular code. ``tier='soft'``, ``source='implicit'``, ``polarity='neg'``.
+
+    Excludes code 0 (positives), molecular-code members, papers with no dominant topic (can't
+    confirm non-molecular), and any ``exclude_pids`` (papers an earlier phase already labelled, so
+    a soft negative never overrides a positive/hard negative). Deterministic (sorted by path)."""
+    exclude = set(exclude_pids) | molecular_member_pids(codes, mol_codes)
+    rows = []
+    for pid, cn in sorted(codes.items()):
+        if cn == 0 or pid in exclude:
+            continue
+        dom = dominant_by_pid.get(pid)
+        if dom is None or dom in allowlist:
+            continue
+        label = topic_labels.get(dom, str(dom))
+        rows.append({"code_number": cn, "pdf_path": pid, "polarity": "neg",
+                     "tier": "soft", "source": "implicit", "criterion": "all",
+                     "evidence": f"non-molecular: topic {dom} {label}".strip()})
+    return rows
+
+
 # --- CLI: select (Phase 1) -------------------------------------------------
 
 def _write_csv(path, header, rows):
@@ -564,6 +616,32 @@ def cmd_cite(args):
              "%d tier-1 rows total in %s (%d rows)", len(c0), n, n_t1, args.gold_set, len(final))
 
 
+def cmd_implicit(args):
+    """Phase 4 (soft negatives): label every embedded non-molecular, non-molecular-code paper as
+    ``implicit`` gold−. Reads persisted ``chunk_topics`` + the corpus map (read-only DB), the
+    curated allowlist, and the existing ``gold_set.csv``. No GPU, no spend."""
+    import db
+    conn = db.connect()
+    try:
+        _dv, _poles, codes = db.fetch_vectors(conn, run=args.run)
+        chunk_topics = db.fetch_chunk_topics(conn, run=args.run, method=args.method)
+    finally:
+        conn.close()
+    allow = load_molecular_topics(args.molecular_topics)
+    labels = load_topic_labels(args.molecular_topics)
+    dom = dominant_topics(chunk_topics)
+    mol = molecular_codes(codes, dom, allow)
+    existing = read_gold_set(args.gold_set)
+    # Exclude only non-implicit labels: a re-run rebuilds the implicit set from scratch (it owns
+    # `implicit`), but must never override a positive or a hard negative for the same paper.
+    keep_labelled = {r["pdf_path"] for r in existing if r.get("source") != "implicit"}
+    rows = implicit_negatives(codes, dom, allow, mol, labels, exclude_pids=keep_labelled)
+    merged = merge_gold(existing, rows, {"implicit"})
+    write_gold_set(args.gold_set, merged)
+    log.info("Phase 4: %d molecular codes; %d soft (implicit) gold− papers; "
+             "merged into %s (%d total rows)", len(mol), len(rows), args.gold_set, len(merged))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -586,6 +664,13 @@ def main(argv=None):
     cite.add_argument("--seed-csv", default=SEED_CSV,
                       help="code-0 seed manifest (its Source File column names the seminal PDFs)")
     cite.set_defaults(func=cmd_cite)
+
+    imp = sub.add_parser("implicit", help="Phase 4: soft (implicit) gold− negatives")
+    imp.add_argument("--run", default="baseline")
+    imp.add_argument("--method", default="chunk")
+    imp.add_argument("--molecular-topics", default=MOLECULAR_TOPICS_CSV)
+    imp.add_argument("--gold-set", default=GOLD_SET_PATH)
+    imp.set_defaults(func=cmd_implicit)
 
     args = ap.parse_args(argv)
     args.func(args)
