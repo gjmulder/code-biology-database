@@ -68,7 +68,7 @@ Barbieri's strict molecular definition above.
 
 ## 2. The data & processing pipeline (reproducible, end-to-end)
 
-Each step lists **script → input → output → tests**. Run `pytest` (274 tests, fully offline —
+Each step lists **script → input → output → tests**. Run `pytest` (284 tests, fully offline —
 fake encoder/tokenizer, no GPU/DB) after any change. MySQL on asushimu is the system of record
 from step 5 on. Tests live in **`tests/`**; an empty root `conftest.py` puts the repo root on
 `sys.path` so the in-root modules import from the subdir.
@@ -81,6 +81,20 @@ from step 5 on. Tests live in **`tests/`**; an empty root `conftest.py` puts the
      references across all 435 codes (code 352/SeqCode has citation text but no hyperlink → empty
      URL).
    - tests: `test_extract.py`.
+
+1b. **Seed the foundational *Code Biology* texts as code 0** — `seed_code_biology.py`
+   - in: `code_biology_seed.csv` (curated manifest: `Source File, Paper Name, URL`) +
+     `Code_Biology_PDFs/` · out: appends rows to `biological_codes.csv` under reserved **`Code
+     Number 0` / `Code Name "Code Biology"`**, copies their PDFs into `pdfs/` under the *same*
+     DOI-naming as the downloader (`download_pdfs.output_path_for`).
+   - These papers *define* the criteria (§1) rather than belonging to any numbered code; code 0
+     makes them first-class corpus members (they flow through embedding/topics/judge like any
+     paper) while staying trivially separable. Add more foundational papers later by appending
+     manifest rows.
+   - Runs **after** step 1 and **before** step 2: extract_csv regenerates the CSV from scratch
+     (wiping appends), so this re-appends only what's missing — idempotent, never duplicates a row
+     or re-copies a PDF on disk. PDFs are **placed directly** (copied), not downloaded.
+   - tests: `test_seed_code_biology.py`.
 
 2. **Download full-text PDFs** — `download_pdfs.py`
    - in: `biological_codes.csv` · out: `pdfs/` (gitignored), `failed_downloads.csv`,
