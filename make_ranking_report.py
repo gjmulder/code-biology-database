@@ -41,6 +41,10 @@ log = logging.getLogger(__name__)
 DEFAULT_CODES = "biological_codes.csv"
 DEFAULT_OUT = "ranking_report.html"
 DEFAULT_RUN = "baseline"
+# The corpus-wide graded judge backing the verdict column. Several graded judges
+# coexist in ``verdicts`` (gemma, the genetic-baseline DeepSeek, the AGREE-anchor
+# ablation tags); the report binds exactly one so the column never mixes judges.
+DEFAULT_JUDGE = "deepseek/deepseek-v4-pro"
 EMBED_METHOD = "chunk"  # the working granularity; surfaced in the UI as "pages"
 
 
@@ -154,9 +158,11 @@ def attach_topics(records, chunk_topics, centroids):
     return records
 
 
-def load_papers_from_db(run=DEFAULT_RUN):
+def load_papers_from_db(run=DEFAULT_RUN, judge=DEFAULT_JUDGE):
     """Read chunk embedding ``e`` + the domain-general graded verdicts + the topic
-    coverage from the DB."""
+    coverage from the DB. ``judge`` selects the single graded judge whose verdicts
+    back the column (default: the genetic-baseline DeepSeek tag) so the report never
+    mixes judges."""
     def work(conn):
         cur = conn.cursor()
         cur.execute(
@@ -167,7 +173,8 @@ def load_papers_from_db(run=DEFAULT_RUN):
         scores = cur.fetchall()
         cur.execute(
             "SELECT pdf_path, criterion, verdict, graded, confidence FROM verdicts "
-            "WHERE graded IS NOT NULL"
+            "WHERE graded IS NOT NULL AND model=%s",
+            (judge,),
         )
         verdicts = cur.fetchall()
         cur.execute(
@@ -281,8 +288,8 @@ _TEMPLATE = """<!DOCTYPE html>
   <div class="sub">{n} papers · baseline run · generated {date}. Rank by
     <b>code-biology similarity</b> (the per-chunk embedding score <code>e</code> against the
     domain-general code-biology poles, max-pooled) or the domain-general <b>LLM verdicts</b>
-    (graded judge, {judged} papers judged); the three criteria collapse to one score via the
-    chosen metric. Click any column to sort.</div>
+    (graded judge <code>{judge}</code>, {judged} papers judged); the three criteria collapse
+    to one score via the chosen metric. Click any column to sort.</div>
 </header>
 
 <div class="controls">
@@ -318,8 +325,8 @@ _TEMPLATE = """<!DOCTYPE html>
   <code>met / unclear / not_met</code> per criterion (CLAUDE.md §9/§9.1), each
   <code>met</code> gated by a verbatim quote; papers not yet judged show &ndash;. Hover a
   verdict cell for its graded value and confidence. The verdicts are still
-  <i>synthetic</i> labels from a comparatively weak judge, so <b>ranks are more
-  trustworthy than absolute magnitudes</b>. Both axes are now domain-general yet
+  <i>synthetic</i> labels &mdash; not validated against a gold set &mdash; so <b>ranks are
+  more trustworthy than absolute magnitudes</b>. Both axes are now domain-general yet
   corpus-wide ρ(e, verdict) stays flat, so they can still legitimately diverge
   paper-by-paper (test_runs.md Runs&nbsp;6&ndash;7). The <i>min</i> metric is the
   weakest-link reading: per Barbieri a biological code requires <i>all three</i>
@@ -454,14 +461,16 @@ render();
 """
 
 
-def build_html(papers):
-    """Render the self-contained HTML page string with ``papers`` inlined as JSON."""
+def build_html(papers, judge=DEFAULT_JUDGE):
+    """Render the self-contained HTML page string with ``papers`` inlined as JSON.
+    ``judge`` is named on the page as the verdict column's provenance."""
     judged = sum(any(v is not None for v in p["verdict"].values()) for p in papers)
     return _TEMPLATE.format(
         data=json.dumps(papers, separators=(",", ":")),
         criteria=json.dumps(CRITERIA),
         n=len(papers),
         judged=judged,
+        judge=judge,
         date=datetime.date.today().isoformat(),
     )
 
@@ -472,10 +481,12 @@ def main(argv=None):
     ap.add_argument("--codes", default=DEFAULT_CODES)
     ap.add_argument("--out", default=DEFAULT_OUT)
     ap.add_argument("--run", default=DEFAULT_RUN, help="embedding run key (default: baseline)")
+    ap.add_argument("--judge", default=DEFAULT_JUDGE,
+                    help=f"graded judge model backing the verdict column (default: {DEFAULT_JUDGE})")
     args = ap.parse_args(argv)
 
-    papers = attach_citations(load_papers_from_db(args.run), args.codes)
-    html = build_html(papers)
+    papers = attach_citations(load_papers_from_db(args.run, args.judge), args.codes)
+    html = build_html(papers, judge=args.judge)
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(html)
     log.info("wrote %s (%d papers)", args.out, len(papers))

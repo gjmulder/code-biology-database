@@ -75,6 +75,40 @@ def test_assemble_pivots_scores_and_verdicts():
     assert y["graded"]["two_worlds"] is None
 
 
+def test_load_papers_filters_verdicts_by_judge(monkeypatch):
+    captured = {}
+
+    class FakeCursor:
+        def execute(self, sql, *a):
+            self.q = sql
+            if "FROM verdicts" in sql:
+                captured["sql"] = sql
+                captured["params"] = a[0] if a else None
+
+        def fetchall(self):
+            if "FROM verdicts" in self.q:
+                return [("pdfs/x.pdf", "two_worlds", "met", 1.0, 0.95)]
+            if "FROM chunk_topics" in self.q:
+                return []
+            if "FROM topic_centroids" in self.q:
+                return []
+            return [(62, "pdfs/x.pdf", "two_worlds", 0.081)]
+
+    class FakeConn:
+        def cursor(self):
+            return FakeCursor()
+
+    monkeypatch.setattr(mr.db, "run_with_reconnect", lambda work, *a, **k: work(FakeConn()))
+    # an explicit judge is bound as a query parameter (one judge, no cross-judge mixing)
+    mr.load_papers_from_db(judge="deepseek/deepseek-v4-pro")
+    assert "model=" in captured["sql"]
+    assert "deepseek/deepseek-v4-pro" in captured["params"]
+    # default judge is the genetic-baseline DeepSeek tag
+    captured.clear()
+    mr.load_papers_from_db()
+    assert mr.DEFAULT_JUDGE in captured["params"]
+
+
 def test_load_papers_from_db_uses_reconnect(monkeypatch):
     score_rows = [(62, "pdfs/x.pdf", "two_worlds", 0.081)]
     verdict_rows = [("pdfs/x.pdf", "two_worlds", "met", 1.0, 0.95)]
@@ -203,6 +237,13 @@ def test_build_html_is_self_contained_with_inlined_data(tmp_path):
     # the topic-coverage column is present (JS-rendered header) and sortable
     assert 'th("topics","Topics"' in html
     assert "topicsHTML(p)" in html
+
+
+def test_build_html_names_judge(tmp_path):
+    papers = _sample_papers(tmp_path)
+    # the judge backing the verdict column is named on the page (provenance)
+    assert "deepseek/deepseek-v4-pro" in mr.build_html(papers, judge="deepseek/deepseek-v4-pro")
+    assert mr.DEFAULT_JUDGE in mr.build_html(papers)  # default tag surfaced
 
 
 def test_default_axis_is_verdicts_and_metric_is_min(tmp_path):
