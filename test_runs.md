@@ -393,3 +393,42 @@ reconstruct quotes, which inflates `not_met`. A sentence-level / span-set verbat
 quote assembled from verbatim sentences, reject true fabrication) is the substantive next gate
 improvement — deferred, not chased here. No bearing on the corpus verdicts; the gold-set plan
 remains the live next step (MEMORY).
+
+## Run 10 — fuzzy grounding gate + strict-gate cost diagnostic (2026-06-18, gate shipped + free measurement)
+
+Acting on Run 9's deferred improvement, the strict-verbatim grounding gate was replaced by a
+**fuzzy** one (gold-set plan Phase 4.5 step 1, TDD). `criteria_judge.is_grounded(quote, source,
+τ=0.85, L=15)` promotes the previously diagnostic-only `quote_coverage` (difflib
+`SequenceMatcher` over spliced non-contiguous spans) to the gate: a quote grounds iff
+**coverage ≥ 0.85 AND longest contiguous block ≥ min(15, len(quote))**. A new `_norm_fuzzy`
+(superset of `_norm_ws`) folds smart quotes/dash variants and joins line-break hyphenation. This
+admits whitespace/smart-quote/hyphenation/splice drift while still rejecting paraphrase and
+fabrication; strict-verbatim is the `τ=1.0` special case. `grounding_gate` /
+`graded_grounding_gate` rewired onto it (suite 304, fully offline).
+
+**Free read-only diagnostic (no GPU, no spend) — how much was the strict gate costing?** Over
+every stored `chunk_verdicts` cell at `agreement==0.0` with a non-empty `evidence_quote`, each
+chunk was reproduced (`chunk_text.reproduce_chunks`, local harrier tokenizer) and the quote
+classified: **A** passes strict (genuine 0.0), **B** fails strict but passes fuzzy (recoverable —
+strict could only have zeroed it on grounding drift), **C** fails both (true paraphrase/fabrication).
+
+| judge | zeroed-with-quote | A genuine 0.0 | **B recoverable** | C fabrication |
+|---|---|---|---|---|
+| DeepSeek V4 Pro | 73 | 5 | **67 (92%)** | 1 |
+| Gemma-4-31b | 231 | 16 | **215 (93%)** | 0 |
+
+**Read.** ~92–93% of strict-gate zeroings on quote-bearing cells were **formatting drift, not
+hallucination** — only **1 true fabrication across 304 cells**. The criterion that lost the most
+is **`adaptors`** (DeepSeek 25, Gemma 159 of the B cells), the molecular-fingerprint criterion the
+molecular gold validation hinges on; B examples are unmistakably real evidence (e.g. *"genes for
+tRNAs that decode both TAA and TAG were readily obtained"*, *"aminoacyl tRNA-synthetases use the
+anticodon as a key identity element"*).
+
+**Caveat (why B is an upper bound).** The pre-gate `agreement` is unrecoverable from storage — a B
+cell *could* have been a genuine 0.0 that merely cited a real-but-drifted quote, in which case
+fuzzy passing it through at 0.0 changes nothing. That irrecoverability is exactly why Phase 4.5
+step 2 retains the raw pre-gate value (`raw_agreement`/`coverage`/`grounding_failed`) going
+forward, making gate-threshold tuning offline-free (parity with the §4 embedding levers). But the
+near-total dominance of B over C decisively justifies the fuzzy gate and predicts the gold
+re-judge (Phase 6) will recover real positives — the `met` rate was suppressed by quote
+formatting, not by the judge disagreeing with the evidence.
