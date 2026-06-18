@@ -42,7 +42,9 @@ from collections import Counter
 import numpy as np
 
 import embed_score as es
+import pdf_text as pt
 from assign_topics import paper_dominant_topic
+from download_pdfs import output_path_for
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
@@ -52,6 +54,15 @@ CSV_PATH = "biological_codes.csv"
 GOLD_DIR = "gold"
 MOLECULAR_TOPICS_CSV = os.path.join(GOLD_DIR, "molecular_topics.csv")
 GOLD_SET_PATH = "gold_set.csv"
+# Phase 3 — Barbieri's own bibliographies (the authority list for the tier-1 upgrade).
+CODE_BIOLOGY_PDFS = "Code_Biology_PDFs"
+SEED_CSV = "code_biology_seed.csv"
+# Seminal Barbieri/Major texts beyond the code-0 seed manifest whose reference lists count as
+# Barbieri's own citations (filenames in CODE_BIOLOGY_PDFS; resolved best-effort, missing skipped).
+SEMINAL_EXTRA = (
+    "The_Organic_Codes_an_introduction_to_semantic_biol.pdf",
+    "Barbieri M (2024) Codes and Evolution-The Origin of Absolute Novelties.pdf",
+)
 # The git-tracked gold reference set: one row per labelled (code, paper) instance, merged
 # across phases. `source` namespaces each phase's rows so a re-run replaces only its own (§Phase 5).
 GOLD_FIELDS = ["code_number", "pdf_path", "polarity", "tier", "source", "criterion", "evidence"]
@@ -300,6 +311,148 @@ def write_gold_set(path, rows):
     _write_csv(path, GOLD_FIELDS, [[r[k] for k in GOLD_FIELDS] for r in rows])
 
 
+# --- Phase 3: tier-1 upgrade (Barbieri-cited) ------------------------------
+#
+# A tier-2 (DB-endorsed) molecular positive upgrades to **tier-1** when Barbieri/Major *also*
+# cite it in their own seminal texts — the authority signal, without the hard "which code does
+# this citation support" classification (we already have the code from the DB). The match key is
+# a citation **signature** ``(first-author surname, year)`` shared by the corpus citation string
+# and Barbieri's reference entry. This is loose by design (surname+year), but it only ever
+# *promotes within* the already-curated molecular positive set, so a stray match over-promotes a
+# real molecular positive rather than admitting a non-code — an acceptable, conservative error.
+
+# A reference entry begins at the left margin with an author block, in one of two house styles:
+#   APA      "Gabius, H.-J. (2000)…"   surname, comma, initial-dot
+#   Springer "Adl SM, Simpson ABG …"   surname, space, ALL-CAPS initials (no comma, no dots)
+# Wrapped continuation lines ("Nature, 465, …", "Microbiol 52:399–451") match neither and so
+# don't start a new entry.
+_REF_ENTRY_RE = re.compile(
+    r"^[A-Z][A-Za-zÀ-ÿ'’-]+"                       # surname
+    r"(?:\s*,\s*[A-Z]\s*\.|\s+[A-Z]{1,4}\b)")      # ", I."  or  " SM"/" ABG"/" T"
+_SURNAME_RE = re.compile(r"\s*([A-Z][A-Za-zÀ-ÿ'’.-]*)")
+_YEAR_RE = re.compile(r"\b(1[89]\d\d|20\d\d)\b")
+
+
+def _signature(text):
+    """``(surname_lower, year)`` from a citation string — first capitalised token + first
+    19xx/20xx year — or ``None`` if either is missing."""
+    text = text or ""
+    m = _SURNAME_RE.match(text)
+    y = _YEAR_RE.search(text)
+    if not m or not y:
+        return None
+    return (m.group(1).lower().rstrip("."), y.group(1))
+
+
+def paper_signature(paper_name):
+    """Citation signature of a corpus ``Paper Name`` (its first-author surname + year)."""
+    return _signature(paper_name)
+
+
+def parse_reference_signatures(ref_text):
+    """A reference section's text → ``{(surname, year), …}`` for every entry.
+
+    Entries are segmented on the left-margin "Surname, I." start (:data:`_REF_ENTRY_RE`);
+    each entry's wrapped lines are joined before signing, so a multi-line reference yields a
+    single signature and a continuation line never spawns a spurious entry."""
+    entries, cur = [], []
+    for raw in ref_text.splitlines():
+        line = raw.strip()
+        if _REF_ENTRY_RE.match(line):
+            if cur:
+                entries.append(" ".join(cur))
+            cur = [line]
+        elif cur:
+            cur.append(line)
+    if cur:
+        entries.append(" ".join(cur))
+    return {s for e in entries if (s := _signature(e))}
+
+
+def seminal_pdfs(pdf_dir=CODE_BIOLOGY_PDFS, seed_csv=SEED_CSV, extra=SEMINAL_EXTRA):
+    """Resolve Barbieri/Major seminal-text PDF paths = the code-0 seed manifest's ``Source File``
+    column plus :data:`SEMINAL_EXTRA`, joined to ``pdf_dir``. De-duplicated, existing files only."""
+    files = []
+    if os.path.exists(seed_csv):
+        with open(seed_csv, newline="", encoding="utf-8") as f:
+            files += [(row.get("Source File") or "").strip() for row in _csv.DictReader(f)]
+    files += list(extra)
+    out, seen = [], set()
+    for name in files:
+        if not name:
+            continue
+        p = os.path.join(pdf_dir, name)
+        if p not in seen and os.path.exists(p):
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def cited_signatures(paths):
+    """Union of reference signatures across the seminal PDFs (extraction failures skipped)."""
+    sigs = set()
+    for p in paths:
+        try:
+            secs = pt.split_sections(pt.extract_text(p))
+        except Exception as e:                       # noqa: BLE001 — a bad PDF must not abort the rest
+            log.warning("could not read references from %s: %s", p, e)
+            continue
+        ref = secs.get("references") or secs.get("bibliography") or ""
+        n_before = len(sigs)
+        sigs |= parse_reference_signatures(ref)
+        log.info("  %-50s %4d signatures (+%d new)",
+                 os.path.basename(p)[:50], len(parse_reference_signatures(ref)), len(sigs) - n_before)
+    return sigs
+
+
+def paper_names_by_path(csv_path=CSV_PATH):
+    """``{pdf_path: Paper Name}`` from ``biological_codes.csv`` (first name per path), keyed by the
+    same DOI-derived path :func:`download_pdfs.output_path_for` gives the gold set's ``pdf_path``."""
+    out = {}
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        for row in _csv.DictReader(f):
+            name = (row.get("Paper Name") or "").strip()
+            if not name:
+                continue
+            pid = output_path_for({"url": row.get("URL") or ""})
+            out.setdefault(pid, name)
+    return out
+
+
+def tier1_upgrade(rows, names_by_path, cited):
+    """Promote DB-endorsed positives that Barbieri/Major also cite to tier-1.
+
+    Returns ``(new_rows, n_upgraded)``. Only ``source == "db"``, ``polarity == "pos"`` rows whose
+    paper signature ∈ ``cited`` are touched: ``tier → "1"``, ``source → "barbieri-cite"``, and the
+    matched ``surname year`` appended to ``evidence``. Idempotent — an already-promoted row carries
+    ``source == "barbieri-cite"`` and is skipped on a re-run."""
+    out, n = [], 0
+    for r in rows:
+        r = dict(r)
+        if r.get("source") == "db" and r.get("polarity") == "pos":
+            sig = paper_signature(names_by_path.get(r["pdf_path"], ""))
+            if sig and sig in cited:
+                r["tier"] = "1"
+                r["source"] = "barbieri-cite"
+                r["evidence"] = f"{r.get('evidence', '')} | barbieri-cited: {sig[0]} {sig[1]}".strip(" |")
+                n += 1
+        out.append(r)
+    return out, n
+
+
+def code0_positives(codes):
+    """Code-0 (the foundational Code Biology / Major seminal texts, §1b) embedded papers as
+    **tier-1 gold+** — the gold *root*: Barbieri's/Major's own definitional texts are the
+    strongest possible authority anchor, above any cited reference. ``codes`` is the embedded
+    corpus map ``pdf_path → code_number`` (``db.fetch_vectors``); only code 0 qualifies. Distinct
+    ``source == "code0"`` so it merges independently of the citation upgrade and survives a
+    ``select`` rebuild (which owns only the molecular ``db``/``barbieri-cite`` positives)."""
+    return [{"code_number": 0, "pdf_path": pid, "polarity": "pos", "tier": "1",
+             "source": "code0", "criterion": "all",
+             "evidence": "Code Biology foundational text (code 0)"}
+            for pid, cn in sorted(codes.items()) if cn == 0]
+
+
 # --- CLI: select (Phase 1) -------------------------------------------------
 
 def _write_csv(path, header, rows):
@@ -368,7 +521,10 @@ def cmd_select(args):
         dom = dominant_topics(chunk_topics)
         mol = molecular_codes(codes, dom, allow)
         rows = tier2_positives(codes, mol, names, allow)
-        merged = merge_gold(read_gold_set(args.gold_set), rows, {"db"})
+        # Reclaim BOTH db and barbieri-cite: the Phase 3 `cite` pass relabels some db rows to
+        # barbieri-cite, so a select re-run must own both provenances to rebuild the tier-2 set
+        # without duplicating an already-upgraded paper (re-run `cite` afterwards to re-promote).
+        merged = merge_gold(read_gold_set(args.gold_set), rows, {"db", "barbieri-cite"})
         write_gold_set(args.gold_set, merged)
         log.info("Phase 2: %d molecular codes (allowlist of %d topics) → %d tier-2 gold+ papers; "
                  "merged into %s (%d total rows)",
@@ -376,6 +532,36 @@ def cmd_select(args):
     else:
         log.warning("no molecular allowlist at %s — skipping Phase 2 tier-2 positives "
                     "(curate it from gold/topic_ranking.csv first)", args.molecular_topics)
+
+
+def cmd_cite(args):
+    """Phase 3: tier-1 = Barbieri's/Major's own foundational texts (code 0) + any tier-2 positive
+    they also cite. Reads ``gold_set.csv`` + ``biological_codes.csv`` + the seminal-text PDFs, and
+    the embedded corpus map (read-only DB) for the code-0 papers. No GPU, no spend."""
+    rows = read_gold_set(args.gold_set)
+    if not rows:
+        log.warning("no rows in %s — run `select` (Phase 2) first (code-0 positives still added)",
+                    args.gold_set)
+    paths = seminal_pdfs(args.pdf_dir, args.seed_csv)
+    log.info("reading Barbieri/Major citations from %d seminal PDFs", len(paths))
+    cited = cited_signatures(paths)
+    names = paper_names_by_path(args.csv)
+    log.info("%d distinct cited (surname, year) signatures; %d corpus papers signed",
+             len(cited), len(names))
+    upgraded, n = tier1_upgrade(rows, names, cited)
+
+    import db
+    conn = db.connect()
+    try:
+        _dv, _poles, codes = db.fetch_vectors(conn, run=args.run)
+    finally:
+        conn.close()
+    c0 = code0_positives(codes)
+    final = merge_gold(upgraded, c0, {"code0"})
+    write_gold_set(args.gold_set, final)
+    n_t1 = sum(r["tier"] == "1" for r in final)
+    log.info("Phase 3: %d code-0 foundational tier-1 positives + %d citation upgrades; "
+             "%d tier-1 rows total in %s (%d rows)", len(c0), n, n_t1, args.gold_set, len(final))
 
 
 def main(argv=None):
@@ -390,6 +576,17 @@ def main(argv=None):
     sel.add_argument("--gold-set", default=GOLD_SET_PATH,
                      help="git-tracked gold reference set to merge tier-2 positives into")
     sel.set_defaults(func=cmd_select)
+
+    cite = sub.add_parser("cite", help="Phase 3: tier-1 = code-0 foundational texts + Barbieri-cited")
+    cite.add_argument("--run", default="baseline", help="embedding run for the code-0 corpus map")
+    cite.add_argument("--csv", default=CSV_PATH)
+    cite.add_argument("--gold-set", default=GOLD_SET_PATH)
+    cite.add_argument("--pdf-dir", default=CODE_BIOLOGY_PDFS,
+                      help="directory of the seminal Barbieri/Major PDFs")
+    cite.add_argument("--seed-csv", default=SEED_CSV,
+                      help="code-0 seed manifest (its Source File column names the seminal PDFs)")
+    cite.set_defaults(func=cmd_cite)
+
     args = ap.parse_args(argv)
     args.func(args)
 

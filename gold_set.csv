@@ -203,3 +203,7 @@ code_number,pdf_path,polarity,tier,source,criterion,evidence
 433,pdfs/10.3389_fonc.2023.1266397.pdf,pos,2,db,all,Zip code -B (RNA) · topic 16 Molecular Codes
 434,pdfs/10.1088_1478-3975_aba5e5_meta.pdf,pos,2,db,all,Zip code -C (Protein) · topic 12 Ubiquitination Code
 434,pdfs/10.1128_mBio.02092-20.pdf,pos,2,db,all,Zip code -C (Protein) · topic 12 Ubiquitination Code
+0,pdfs/10.1007_s12304-014-9212-1.pdf,pos,1,code0,all,Code Biology foundational text (code 0)
+0,pdfs/10.1016_j.biosystems.2017.10.005.pdf,pos,1,code0,all,Code Biology foundational text (code 0)
+0,pdfs/10.1016_j.biosystems.2021.104501.pdf,pos,1,code0,all,Code Biology foundational text (code 0)
+0,pdfs/10.1016_j.biosystems.2025.105516.pdf,pos,1,code0,all,Code Biology foundational text (code 0)

@@ -247,3 +247,121 @@ def test_gold_set_csv_roundtrip(tmp_path):
     back = bgs.read_gold_set(str(path))
     assert back == [{k: str(rows[0][k]) for k in bgs.GOLD_FIELDS}]
     assert bgs.read_gold_set(str(tmp_path / "absent.csv")) == []
+
+
+# --- Phase 3: tier-1 upgrade (Barbieri-cited) ------------------------------
+
+def test_paper_signature_parses_first_author_surname_and_year():
+    # APA-style: surname before the comma, year in parens after the authors
+    assert bgs.paper_signature("Farina, A. (2019). Acoustic codes. Biosystems 183.") == ("farina", "2019")
+    # multi-author author-date with quoted title
+    assert bgs.paper_signature('Vedula, P. and A. Kashina (2018). "The actin code." JCS.') == ("vedula", "2018")
+    # hyphenated initials, the surname stops at the comma
+    assert bgs.paper_signature("Gabius, H.-J. (2000). The sugar code. Naturwiss. 87.") == ("gabius", "2000")
+    # no parseable year → None
+    assert bgs.paper_signature("Some prose with no author and no year") is None
+    assert bgs.paper_signature("") is None
+
+
+def test_parse_reference_signatures_splits_entries_and_ignores_continuations():
+    ref = (
+        "References\n"
+        "Barash, Y., Calarco, J. A., et al. (2010). Deciphering the splicing code.\n"
+        "Nature, 465, 53-59.\n"                       # continuation: must NOT start a new entry
+        "Gabius, H.-J. (2000). The sugar code.\n"
+        "Naturwissenschaften, 87, 108-121.\n"
+    )
+    sigs = bgs.parse_reference_signatures(ref)
+    assert sigs == {("barash", "2010"), ("gabius", "2000")}
+
+
+def test_parse_reference_signatures_springer_style():
+    # Springer/Nature house style: "Surname IN, Surname IN … (YYYY)" — no comma after the first
+    # surname, initials have no dots. The year is in parens but far into the (joined) entry.
+    ref = (
+        "References\n"
+        "Adl SM, Simpson ABG, Farmer MA et al (2005) The new higher-level classification.\n"
+        "J Eukaryot Microbiol 52:399-451\n"          # continuation: must NOT start a new entry
+        "Agalioti T, Chen G, Thanos D (2002) Deciphering the histone acetylation code.\n"
+    )
+    assert bgs.parse_reference_signatures(ref) == {("adl", "2005"), ("agalioti", "2002")}
+
+
+def test_seminal_pdfs_resolves_seed_plus_extra_existing_only(tmp_path):
+    pdf_dir = tmp_path / "pdfs"
+    pdf_dir.mkdir()
+    (pdf_dir / "Intro - Barbieri (2014).pdf").write_bytes(b"%PDF")
+    (pdf_dir / "Organic.pdf").write_bytes(b"%PDF")
+    # the seed manifest names two files but only one exists on disk
+    seed = tmp_path / "seed.csv"
+    seed.write_text("Source File,Paper Name,URL\n"
+                    "Intro - Barbieri (2014).pdf,x,http://x\n"
+                    "Missing - Barbieri (2099).pdf,y,http://y\n", encoding="utf-8")
+    got = bgs.seminal_pdfs(pdf_dir=str(pdf_dir), seed_csv=str(seed), extra=("Organic.pdf", "Organic.pdf"))
+    assert got == [str(pdf_dir / "Intro - Barbieri (2014).pdf"), str(pdf_dir / "Organic.pdf")]
+
+
+def test_paper_names_by_path_keyed_by_output_path(tmp_path):
+    csv = tmp_path / "codes.csv"
+    csv.write_text(
+        "Code Number,Code Name,Paper Name,URL\n"
+        "30,Sugar code,Gabius (2000). The sugar code.,https://doi.org/10.1007/sugar\n",
+        encoding="utf-8")
+    names = bgs.paper_names_by_path(str(csv))
+    assert names == {"pdfs/10.1007_sugar.pdf": "Gabius (2000). The sugar code."}
+
+
+def test_tier1_upgrade_promotes_only_cited_db_positives():
+    rows = [
+        {"code_number": 30, "pdf_path": "pdfs/sugar.pdf", "polarity": "pos", "tier": "2",
+         "source": "db", "criterion": "all", "evidence": "Sugar code"},
+        {"code_number": 12, "pdf_path": "pdfs/uncited.pdf", "polarity": "pos", "tier": "2",
+         "source": "db", "criterion": "all", "evidence": "Genetic code"},
+        {"code_number": 99, "pdf_path": "pdfs/neg.pdf", "polarity": "neg", "tier": "hard",
+         "source": "exclusion", "criterion": "all", "evidence": "barbieri"},
+    ]
+    names = {"pdfs/sugar.pdf": "Gabius, H.-J. (2000). The sugar code.",
+             "pdfs/uncited.pdf": "Nobody, Z. (1700). Obscure."}
+    cited = {("gabius", "2000")}
+    upgraded, n = bgs.tier1_upgrade(rows, names, cited)
+    assert n == 1
+    sug = next(r for r in upgraded if r["pdf_path"] == "pdfs/sugar.pdf")
+    assert sug["tier"] == "1" and sug["source"] == "barbieri-cite"
+    assert "gabius 2000" in sug["evidence"] and "Sugar code" in sug["evidence"]
+    # the uncited positive and the hard negative are untouched
+    assert next(r for r in upgraded if r["pdf_path"] == "pdfs/uncited.pdf")["tier"] == "2"
+    assert next(r for r in upgraded if r["pdf_path"] == "pdfs/neg.pdf")["source"] == "exclusion"
+
+
+def test_tier1_upgrade_is_idempotent():
+    rows = [{"code_number": 30, "pdf_path": "pdfs/sugar.pdf", "polarity": "pos", "tier": "2",
+             "source": "db", "criterion": "all", "evidence": "Sugar code"}]
+    names = {"pdfs/sugar.pdf": "Gabius, H.-J. (2000). The sugar code."}
+    cited = {("gabius", "2000")}
+    once, _ = bgs.tier1_upgrade(rows, names, cited)
+    twice, n2 = bgs.tier1_upgrade(once, names, cited)
+    assert twice == once and n2 == 0          # already barbieri-cite, not re-upgraded
+
+
+def test_code0_positives_only_code_zero_as_tier1():
+    codes = {"pdfs/intro.pdf": 0, "pdfs/whatis.pdf": 0, "pdfs/sugar.pdf": 30}
+    rows = bgs.code0_positives(codes)
+    assert [r["pdf_path"] for r in rows] == ["pdfs/intro.pdf", "pdfs/whatis.pdf"]  # sorted, code 30 out
+    assert all(r["code_number"] == 0 and r["polarity"] == "pos" and r["tier"] == "1"
+               and r["source"] == "code0" and r["criterion"] == "all" for r in rows)
+
+
+def test_select_merge_reclaims_barbieri_cite_rows():
+    # after a cite pass some db rows became barbieri-cite; re-running select must reclaim BOTH
+    # so the rebuilt tier-2 set never duplicates an upgraded paper.
+    existing = [
+        {"code_number": 30, "pdf_path": "pdfs/sugar.pdf", "polarity": "pos", "tier": "1",
+         "source": "barbieri-cite", "criterion": "all", "evidence": "Sugar code | barbieri-cited"},
+        {"code_number": 99, "pdf_path": "pdfs/neg.pdf", "polarity": "neg", "tier": "hard",
+         "source": "exclusion", "criterion": "all", "evidence": "barbieri"},
+    ]
+    fresh = [{"code_number": 30, "pdf_path": "pdfs/sugar.pdf", "polarity": "pos", "tier": "2",
+              "source": "db", "criterion": "all", "evidence": "Sugar code"}]
+    merged = bgs.merge_gold(existing, fresh, {"db", "barbieri-cite"})
+    assert [r["pdf_path"] for r in merged] == ["pdfs/neg.pdf", "pdfs/sugar.pdf"]
+    assert sum(r["pdf_path"] == "pdfs/sugar.pdf" for r in merged) == 1   # no duplicate
