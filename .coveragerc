@@ -1,0 +1,21 @@
+# Coverage config. Run: pytest --cov (pytest-cov reads [run]/[report] here).
+# Scope is the live pipeline only — retired drivers and manual probes are omitted
+# (CLAUDE.md §2 step 6: judge_corpus.py / run_sample.py drove the retired pre-redesign
+# categorical judge; smoke_openrouter.py is a live-API smoke script, not unit code).
+[run]
+source = .
+omit =
+    tests/*
+    conftest.py
+    judge_corpus.py
+    run_sample.py
+    smoke_openrouter.py
+
+[report]
+# main() / __main__ CLI glue and live-DB/GPU/network I/O are exercised by the drivers,
+# not the offline suite; don't count obvious un-unit-testable lines against coverage.
+exclude_also =
+    if __name__ == .__main__.:
+    def main\(
+    raise NotImplementedError
+    if TYPE_CHECKING:

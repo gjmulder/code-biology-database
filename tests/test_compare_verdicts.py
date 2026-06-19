@@ -100,3 +100,92 @@ def test_pooled_spearman_skips_missing_e_or_value():
                              value_of=lambda p, c: p["graded"].get(c))
     # only a and d survive → e[0.9,0.2] vs v[1.0,-1.0] → +1.0
     assert rho["x"]["chunk"] == 1.0
+
+
+# --- aggregate_chunk_verdicts (max-pool chunks → graded_max + categorical) --
+
+def test_aggregate_chunk_verdicts_maxpools_to_graded_and_categorical():
+    chunk_verdicts = {
+        # (idx, agreement, confidence, quote); max agreement 1.0 → met
+        ("a.pdf", "two_worlds"): [(0, 0.0, 0.3, ""), (1, 1.0, 0.9, "q")],
+        # all non-positive → graded_max 0.0, categorical not_met
+        ("a.pdf", "adaptors"): [(0, -0.5, 0.5, ""), (1, 0.0, 0.2, "")],
+    }
+    agg = cv.aggregate_chunk_verdicts(chunk_verdicts)
+    gmax_tw, cat_tw = agg[("a.pdf", "two_worlds")]
+    assert gmax_tw == 1.0 and cat_tw == "met"
+    gmax_ad, cat_ad = agg[("a.pdf", "adaptors")]
+    assert gmax_ad == 0.0 and cat_ad == "not_met"
+
+
+# --- build_report (pure string assembly) -----------------------------------
+
+def test_build_report_renders_old_to_new_graded_and_rho_sections():
+    papers = {
+        "a": {"scores": {"chunk": {"two_worlds": 0.9}},
+              "verdict": {"two_worlds": "met"}, "graded": {"two_worlds": 1.0}},
+        "b": {"scores": {"chunk": {"two_worlds": 0.1}},
+              "verdict": {"two_worlds": "not_met"}, "graded": {"two_worlds": -0.5}},
+    }
+    order = ["a", "b"]
+    old_verdict = {("a", "two_worlds"): "unclear", ("b", "two_worlds"): "not_met"}
+    report = cv.build_report(papers, order, old_verdict,
+                             methods=["chunk"], criteria=["two_worlds"])
+    assert isinstance(report, str)
+    assert "# Judge pilot comparison — 2 pilot papers" in report
+    assert "## Categorical distribution (old → new) per criterion" in report
+    # old had met:0, new has met:1 → the transition is rendered
+    assert "met: 0→1" in report
+    assert "## Graded value distribution (new axis) per criterion" in report
+    assert "## Pooled ρ over pilot papers" in report
+
+
+def test_build_report_drops_papers_with_no_graded_value():
+    # a graded None must not crash the graded distribution / spread
+    papers = {
+        "a": {"scores": {"chunk": {"two_worlds": 0.9}},
+              "verdict": {"two_worlds": "met"}, "graded": {"two_worlds": None}},
+    }
+    report = cv.build_report(papers, ["a"], {}, methods=["chunk"],
+                             criteria=["two_worlds"])
+    assert "n=0" in report   # no graded values survived the None filter
+
+
+# --- snapshot round-trip (file I/O glue) -----------------------------------
+
+class _RowsCursor:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=()):
+        pass
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+class _RowsConn:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def cursor(self):
+        return _RowsCursor(self._rows)
+
+
+def test_snapshot_writes_only_pilot_papers_then_load_roundtrips(tmp_path):
+    rows = [("a.pdf", "two_worlds", "met"),
+            ("a.pdf", "adaptors", "unclear"),
+            ("z.pdf", "two_worlds", "not_met")]  # not in the pilot set → filtered out
+    path = tmp_path / "old.json"
+    written = cv._snapshot(_RowsConn(rows), {"a.pdf"}, str(path))
+    assert {r["pdf_path"] for r in written} == {"a.pdf"}   # z.pdf excluded
+    loaded = cv._load_snapshot(str(path))
+    assert loaded[("a.pdf", "two_worlds")] == "met"
+    assert loaded[("a.pdf", "adaptors")] == "unclear"
+    assert ("z.pdf", "two_worlds") not in loaded

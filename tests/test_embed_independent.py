@@ -280,3 +280,90 @@ def test_build_pool_keeps_only_on_disk_and_dedupes(tmp_path, monkeypatch):
     pool = ei.build_pool("ignored.csv", str(pdf_dir))
     # one entry: deduped by path, missing-file row dropped, first code wins
     assert pool == [{"code_number": "10", "pdf_path": str(pdf_dir / "10.1038_x.pdf")}]
+
+
+def test_load_verdicts_reads_jsonl_skipping_blank_lines(tmp_path):
+    path = tmp_path / "v.jsonl"
+    path.write_text('{"pdf_path": "a.pdf", "criteria": {}}\n'
+                    '\n'   # blank line ignored
+                    '{"pdf_path": "b.pdf", "criteria": {}}\n')
+    recs = ei.load_verdicts(str(path))
+    assert [r["pdf_path"] for r in recs] == ["a.pdf", "b.pdf"]
+
+
+def test_fmt_renders_none_as_blank_and_signs_floats():
+    assert ei._fmt(None) == ""
+    assert ei._fmt(0.5) == "+0.500"
+    assert ei._fmt(-0.25) == "-0.250"
+
+
+# --- report_from_db: the full markdown + CSV assembly (faked DB) ------------
+#
+# The existing report_from_db tests pass an empty payload (they only check run/judge are
+# threaded). This one feeds a populated payload + topic strata through faked db reads so the
+# per-paper tables, pooled ρ, per-topic ρ, pole separation/width and control sections all
+# render — exercising the report assembler offline, no MySQL.
+
+CRITS = ["two_worlds", "adaptors", "arbitrariness"]
+
+
+def _populated_payload(n=12):
+    # n papers, all dominant topic 3, e ascending, verdicts cycling so ρ has rank variation.
+    cycle = ["met", "unclear", "not_met"]
+    papers, order = {}, []
+    for i in range(n):
+        pid = f"pdfs/p{i}.pdf"
+        order.append(pid)
+        e = i / n
+        v = cycle[i % 3]
+        papers[pid] = {
+            "code": i,
+            "scores": {"chunk": {c: e for c in CRITS}},
+            "verdict": {c: v for c in CRITS},
+            "confidence": {c: 0.8 for c in CRITS},
+        }
+    return {
+        "papers": papers, "order": order,
+        "meta": {"model": "harrier", "dim": 5376, "use_4bit": "False",
+                 "chunk_size": 8192, "chunk_overlap": 4096,
+                 "scoring": "leverred-axis", "whiten_k": 0, "shared_strength": 0.5,
+                 "controls_scoring": "leverred-axis"},
+        "pole_separation": {"pos": {"tw|ad": 0.61}, "neg": {"tw|ad": 0.52},
+                            "within": {c: 0.55 for c in CRITS}},
+        "controls": {"genetic-code": {c: 0.4 for c in CRITS},
+                     "deterministic-chemistry": {c: -0.1 for c in CRITS}},
+    }
+
+
+def test_report_from_db_writes_full_markdown_and_csv(monkeypatch, tmp_path):
+    payload = _populated_payload(12)
+    pids = payload["order"]
+    monkeypatch.setattr(ei.db, "fetch_report",
+                        lambda conn, run="baseline", judge=None: payload)
+    # every paper sits in topic 3 → one stratum of 12 (≥ MIN_TOPIC_N) renders the per-topic table
+    monkeypatch.setattr(ei.db, "fetch_chunk_topics",
+                        lambda conn, run="baseline", method="chunk":
+                        {pid: [(0, 3, 0.6)] for pid in pids})
+    monkeypatch.setattr(ei.db, "fetch_topic_centroids",
+                        lambda conn, run="baseline":
+                        {3: {"label": "Genetic Code", "vec": [0.0]}})
+
+    md_path = tmp_path / "report.md"
+    csv_path = tmp_path / "scores.csv"
+    ei.report_from_db(None, str(md_path), str(csv_path), run="baseline")
+
+    md = md_path.read_text()
+    assert "# Independent Embedding Analysis vs LLM Verdicts" in md
+    assert "## Per-paper verdicts" in md
+    assert "### Criterion: `two_worlds`" in md
+    assert "Spearman ρ(e, verdict_ordinal)" in md
+    assert "Per-topic ρ" in md and "Genetic Code" in md       # the stratum rendered
+    assert "Pole separation" in md and "Pole width `within`" in md
+    assert "Control checks" in md and "genetic-code" in md
+    assert "**Scoring:** offline recompute" in md             # leverred-axis branch
+
+    import csv as _csv
+    with open(csv_path, encoding="utf-8") as fh:
+        csv_rows = list(_csv.DictReader(fh))
+    assert len(csv_rows) == 12
+    assert {"two_worlds_verdict", "two_worlds_e_chunk"} <= set(csv_rows[0])

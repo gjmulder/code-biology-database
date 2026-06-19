@@ -463,3 +463,331 @@ def test_gold_labels_ddl_run_and_judge_agnostic():
     # locate the gold_labels DDL block and assert it carries no run/model column
     block = ddl.split("CREATE TABLE IF NOT EXISTS gold_labels", 1)[1].split("ENGINE", 1)[0]
     assert " run " not in block and "model" not in block
+
+
+# --- load_env: .env parsing + process-env override (offline) ----------------
+
+def test_load_env_parses_file_and_skips_comments(tmp_path, monkeypatch):
+    # ensure no stray process env leaks into the parse
+    for k in ("DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASS"):
+        monkeypatch.delenv(k, raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "# a comment\n"
+        "DB_HOST = asushimu \n"
+        "DB_PORT=3306\n"
+        "DB_PASS=p@ss=with=equals\n"   # value may contain '=' — only the first splits
+        "\n"
+        "   # indented comment\n"
+    )
+    env = db.load_env(str(env_file))
+    assert env["DB_HOST"] == "asushimu"          # whitespace trimmed both sides
+    assert env["DB_PORT"] == "3306"
+    assert env["DB_PASS"] == "p@ss=with=equals"   # split only on the first '='
+    assert "a comment" not in " ".join(env)
+
+
+def test_load_env_process_env_overrides_file(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text("DB_HOST=fromfile\n")
+    monkeypatch.setenv("DB_HOST", "fromenv")
+    assert db.load_env(str(env_file))["DB_HOST"] == "fromenv"
+
+
+def test_load_env_missing_file_is_empty_without_process_env(tmp_path, monkeypatch):
+    for k in ("DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASS"):
+        monkeypatch.delenv(k, raising=False)
+    assert db.load_env(str(tmp_path / "nope.env")) == {}
+
+
+# --- migrate_runs: the idempotent, guarded schema migration -----------------
+#
+# CLAUDE.md §3/§7.8 lean on migrate_runs being a no-op on an already-migrated DB (the
+# dump is the rollback path, but the migration must not fire twice). A programmable cursor
+# answers the information_schema probes from an in-memory schema and records every mutating
+# statement, so the guards are tested offline without a live MySQL.
+
+class _SchemaCursor:
+    """Answers _has_column / _pk_columns from an in-memory schema; records mutations.
+
+    ``columns[table]`` = set of column names; ``pks[table]`` = ordered PK column list.
+    Every non-SELECT statement is appended to ``executed`` (the migration's effect)."""
+
+    def __init__(self, columns, pks):
+        self.columns = columns
+        self.pks = pks
+        self.executed = []
+        self._pending = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=()):
+        low = " ".join(sql.split()).lower()
+        if "information_schema.columns" in low:
+            table, col = params
+            self._pending = [(1,)] if col in self.columns.get(table, set()) else []
+        elif "information_schema.key_column_usage" in low:
+            (table,) = params
+            self._pending = [(c,) for c in self.pks.get(table, [])]
+        else:
+            self.executed.append((" ".join(sql.split()), tuple(params)))
+            self._pending = []
+
+    def fetchone(self):
+        return self._pending[0] if self._pending else None
+
+    def fetchall(self):
+        return list(self._pending)
+
+
+class _CursorConn:
+    """Hands out a single pre-built cursor; records commit()."""
+
+    def __init__(self, cursor):
+        self._cursor = cursor
+        self.committed = False
+
+    def cursor(self):
+        return self._cursor
+
+    def commit(self):
+        self.committed = True
+
+    def close(self):
+        pass
+
+
+def _migrated_schema():
+    """An already-run-scoped, judge-keyed schema — every guard should see its column/PK."""
+    run_tables = list(db._OLD_PKS)
+    columns = {t: set(db._OLD_PKS[t]) | {"run"} for t in run_tables}
+    columns["verdicts"] = {"code_number", "pdf_path", "criterion", "verdict",
+                           "confidence", "graded", "model", "prompt_hash"}
+    columns["chunk_verdicts"] = {"code_number", "pdf_path", "criterion", "chunk_idx",
+                                 "model", "prompt_hash", "raw_agreement", "coverage",
+                                 "grounding_failed"}
+    # embedding_scores no longer carries the legacy verdict/confidence columns
+    pks = {t: ["run"] + db._OLD_PKS[t] for t in run_tables}
+    pks["verdicts"] = ["code_number", "pdf_path", "criterion", "model"]
+    pks["chunk_verdicts"] = ["code_number", "pdf_path", "criterion", "chunk_idx", "model"]
+    return columns, pks
+
+
+def test_migrate_runs_is_noop_on_already_migrated_db():
+    cur = _SchemaCursor(*_migrated_schema())
+    conn = _CursorConn(cur)
+    db.migrate_runs(conn)
+    assert cur.executed == []          # not a single ALTER/INSERT/UPDATE fired
+    assert conn.committed              # still commits the (empty) transaction
+
+
+def test_migrate_runs_adds_run_and_rebuilds_pks_on_legacy_db():
+    # legacy: no `run` anywhere, embedding_scores still has verdict/confidence,
+    # verdicts lacks graded/prompt_hash and is not judge-keyed.
+    columns = {t: set(db._OLD_PKS[t]) for t in db._OLD_PKS}
+    columns["embedding_scores"] |= {"verdict", "confidence"}
+    columns["verdicts"] = {"code_number", "pdf_path", "criterion", "verdict", "confidence"}
+    columns["chunk_verdicts"] = {"code_number", "pdf_path", "criterion", "chunk_idx"}
+    pks = {t: list(db._OLD_PKS[t]) for t in db._OLD_PKS}
+    pks["verdicts"] = ["code_number", "pdf_path", "criterion"]
+    pks["chunk_verdicts"] = ["code_number", "pdf_path", "criterion", "chunk_idx"]
+    cur = _SchemaCursor(columns, pks)
+    db.migrate_runs(_CursorConn(cur))
+    joined = "\n".join(sql for sql, _ in cur.executed)
+    params_seen = [p for _, ps in cur.executed for p in ps]
+    # every embedding-side table gains `run` and a rebuilt PK with run leading
+    for table in db._OLD_PKS:
+        assert f"ALTER TABLE {table} ADD COLUMN run" in joined
+        assert f"ADD PRIMARY KEY (run, {', '.join(db._OLD_PKS[table])})" in joined
+    # legacy verdict columns back-filled into `verdicts`, then dropped
+    assert "INSERT INTO verdicts" in joined
+    assert "DROP COLUMN verdict, DROP COLUMN confidence" in joined
+    # graded + prompt provenance added; judge `model` promoted into both verdict PKs
+    assert "ADD COLUMN graded DOUBLE" in joined
+    assert "ADD PRIMARY KEY (code_number, pdf_path, criterion, model)" in joined
+    assert ("ADD PRIMARY KEY (code_number, pdf_path, criterion, chunk_idx, model)"
+            in joined)
+    # legacy NULL/blank judge tags back-filled to the Gemma corpus before the PK widens
+    assert "UPDATE verdicts SET model=%s WHERE model IS NULL OR model=''" in joined
+    assert db.BACKFILL_JUDGE_MODEL in params_seen
+
+
+# --- fetch_report: assemble the report payload + verdict last-wins join ------
+
+class _QueuedCursor:
+    """Returns canned result-sets in execute() order — for the read assemblers."""
+
+    def __init__(self, resultsets):
+        self._rs = list(resultsets)
+        self._cur = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=()):
+        self._cur = self._rs.pop(0) if self._rs else []
+
+    def fetchall(self):
+        return list(self._cur)
+
+    def fetchone(self):
+        return self._cur[0] if self._cur else None
+
+
+def test_fetch_report_assembles_papers_scores_and_verdicts():
+    # query order in fetch_report: scores, controls, pole_separation, run_meta, verdicts
+    resultsets = [
+        [  # embedding_scores: code, pid, method, criterion, e
+            (3, "pdfs/a.pdf", "chunk", "two_worlds", 0.4),
+            (3, "pdfs/a.pdf", "chunk", "adaptors", 0.1),
+        ],
+        [("AGREE_genetic", "two_worlds", 0.9)],       # control_scores
+        [("within", "two_worlds", 0.6)],              # pole_separation
+        [("run_ts", "2026-06-19 00:00:00")],          # run_meta
+        [  # verdicts: code, pid, criterion, verdict, confidence — ORDER BY run_ts
+            (3, "pdfs/a.pdf", "two_worlds", "unclear", 0.5),
+            (3, "pdfs/a.pdf", "two_worlds", "met", 0.8),   # later row wins (last-wins)
+            (3, "pdfs/a.pdf", "adaptors", "not_met", 0.7),
+        ],
+    ]
+    conn = _CursorConn(_QueuedCursor(resultsets))
+    rep = db.fetch_report(conn, run="baseline")
+    assert rep["order"] == ["pdfs/a.pdf"]
+    paper = rep["papers"]["pdfs/a.pdf"]
+    assert paper["code"] == 3
+    assert paper["scores"]["chunk"] == {"two_worlds": 0.4, "adaptors": 0.1}
+    # last verdict row per (code,pid,crit) wins the join
+    assert paper["verdict"]["two_worlds"] == "met"
+    assert paper["confidence"]["two_worlds"] == 0.8
+    assert paper["verdict"]["adaptors"] == "not_met"
+    assert rep["controls"] == {"AGREE_genetic": {"two_worlds": 0.9}}
+    assert rep["pole_separation"]["within"]["two_worlds"] == 0.6
+    assert rep["meta"]["run_ts"] == "2026-06-19 00:00:00"
+
+
+def test_fetch_gold_keys_on_code_pid_criterion():
+    rows = [
+        (3, "pdfs/g.pdf", "pos", "all", "2", "db", "Genetic code"),
+        (29, "pdfs/n.pdf", "neg", "all", "soft", "implicit", "non-molecular"),
+    ]
+    conn = _CursorConn(_QueuedCursor([rows]))
+    gold = db.fetch_gold(conn)
+    assert gold[(3, "pdfs/g.pdf", "all")] == {
+        "polarity": "pos", "tier": "2", "source": "db", "evidence": "Genetic code"}
+    assert gold[(29, "pdfs/n.pdf", "all")]["polarity"] == "neg"
+
+
+def test_fetch_chunk_topics_groups_by_pid_in_chunk_order():
+    rows = [
+        ("pdfs/a.pdf", 0, 3, 0.51),
+        ("pdfs/a.pdf", 1, 3, 0.62),
+        ("pdfs/b.pdf", 0, 11, 0.40),
+    ]
+    conn = _CursorConn(_QueuedCursor([rows]))
+    out = db.fetch_chunk_topics(conn)
+    assert out["pdfs/a.pdf"] == [(0, 3, 0.51), (1, 3, 0.62)]
+    assert out["pdfs/b.pdf"] == [(0, 11, 0.40)]
+
+
+def test_fetch_chunk_verdicts_groups_by_paper_criterion():
+    rows = [
+        ("pdfs/a.pdf", "two_worlds", 0, 0.5, 0.8, "quote one"),
+        ("pdfs/a.pdf", "two_worlds", 1, 0.0, 0.2, ""),
+    ]
+    conn = _CursorConn(_QueuedCursor([rows]))
+    out = db.fetch_chunk_verdicts(conn, judge="deepseek/deepseek-v4-pro")
+    assert out[("pdfs/a.pdf", "two_worlds")] == [
+        (0, 0.5, 0.8, "quote one"), (1, 0.0, 0.2, "")]
+
+
+def test_fetch_report_scopes_verdicts_to_judge_when_given():
+    # with judge=, the verdict SELECT must filter WHERE model=%s (not newest-wins)
+    cur = _QueuedCursor([[], [], [], [], []])
+    captured = {}
+    orig = cur.execute
+
+    def spy(sql, params=()):
+        if "FROM verdicts" in sql:
+            captured["sql"] = " ".join(sql.split())
+            captured["params"] = tuple(params)
+        return orig(sql, params)
+
+    cur.execute = spy
+    db.fetch_report(_CursorConn(cur), run="baseline", judge="deepseek/deepseek-v4-pro")
+    assert "WHERE model=%s" in captured["sql"]
+    assert captured["params"] == ("deepseek/deepseek-v4-pro",)
+
+
+# --- store_* write paths: the system-of-record upserts (recording cursor) ---
+#
+# Thin wrappers over the (separately tested) *_rows transforms, but they own the upsert SQL
+# and the judge/run keying, so a recording cursor confirms the right statement fires and the
+# written-row count is returned — offline, no live MySQL.
+
+class _RecCursor:
+    """Records execute()/executemany() statements + rows; no DB."""
+
+    def __init__(self):
+        self.many = []   # [(sql, rows), ...]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=()):
+        pass
+
+    def executemany(self, sql, rows):
+        self.many.append((" ".join(sql.split()), list(rows)))
+
+
+def _rec_conn(monkeypatch):
+    """A recording conn with init_schema stubbed (no DDL against a live server)."""
+    monkeypatch.setattr(db, "init_schema", lambda conn: None)
+    cur = _RecCursor()
+    return _CursorConn(cur), cur
+
+
+def test_update_verdicts_upserts_and_returns_count(monkeypatch):
+    conn, cur = _rec_conn(monkeypatch)
+    records = [{"code_number": 3, "pdf_path": "a.pdf",
+                "criteria": {"two_worlds": {"verdict": "met", "confidence": 0.8,
+                                            "graded": 1.0, "prompt_hash": "h"}}}]
+    n = db.update_verdicts(conn, records, model="deepseek/deepseek-v4-pro")
+    assert n == 1 and conn.committed
+    sql, rows = cur.many[0]
+    assert "INSERT INTO verdicts" in sql and "ON DUPLICATE KEY UPDATE" in sql
+    assert rows[0][0] == 3 and rows[0][6] == "deepseek/deepseek-v4-pro"  # code, judge model
+
+
+def test_store_gold_upserts_gold_labels(monkeypatch):
+    conn, cur = _rec_conn(monkeypatch)
+    n = db.store_gold(conn, GOLD_RECORDS)
+    assert n == 2 and conn.committed
+    sql, rows = cur.many[0]
+    assert "INSERT INTO gold_labels" in sql
+    assert len(rows) == 2
+
+
+def test_delete_score_rows_noop_on_empty(monkeypatch):
+    conn, cur = _rec_conn(monkeypatch)
+    db.delete_score_rows(conn, [], run="baseline")
+    assert cur.many == [] and not conn.committed   # nothing executed, nothing committed
+
+
+def test_delete_score_rows_deletes_each_pid(monkeypatch):
+    conn, cur = _rec_conn(monkeypatch)
+    db.delete_score_rows(conn, ["a.pdf", "b.pdf"], run="baseline")
+    sql, rows = cur.many[0]
+    assert "DELETE FROM embedding_scores WHERE run=%s AND pdf_path=%s" in sql
+    assert rows == [("baseline", "a.pdf"), ("baseline", "b.pdf")]
+    assert conn.committed
