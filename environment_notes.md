@@ -27,6 +27,20 @@ Reference for operating the infrastructure. Not needed for normal code editing.
   loads it into MySQL and deletes it. Vectors are stored as **float32 little-endian
   bytes** in `LONGBLOB` columns.
 
+#### DB backup before schema changes (CLAUDE.md §7.8)
+
+Take a compressed dump **before** any schema change (new table/column, `ALTER`, migration,
+first `init_schema` on new DDL):
+
+```bash
+mysqldump --single-transaction --no-tablespaces … codebiology | gzip > codebiology_$(date +%Y%m%d_%H%M%S).sql.gz
+```
+
+- `--no-tablespaces` is **required** — the pipeline DB user lacks the global `PROCESS`
+  privilege, so without it `mysqldump` errors out probing tablespaces.
+- `--single-transaction` gives a consistent snapshot without locking.
+- Dumps are gitignored. Run with the `.env` connection params (host/port/user/pass).
+
 ### Harrier embedder runtime (asushimu 3090 Ti)
 - Model `microsoft/harrier-oss-v1-27b` at `/data/vllm/harrier-oss-v1-27b` (Gemma3-27B
   decoder-only embedder, 5376-dim, MIT). Loaded via sentence-transformers in **4-bit**

@@ -19,7 +19,8 @@ scores how strongly each paper's literature argues Barbieri's definition of an o
 has two independent measurement axes over the same papers:
 
 - **LLM verdicts** (`criteria_judge.py`) — a graded `agreement` (−1…+1) per criterion rolled up
-  to categorical `met / not_met / unclear`, every `met` gated by a verbatim quote (§9).
+  to categorical `met / not_met / unclear`, every `met` gated by a **fuzzy** verbatim-quote
+  check (§9).
 - **Embedding axis** (`embed_*` + `run_harrier_embed.py`) — a continuous corpus-contrastive
   score `e` per criterion (§4).
 
@@ -27,7 +28,9 @@ The two axes are **independent and reported side-by-side** — neither is author
 verdicts are *synthetic* ground truths from comparatively weak models and may share the
 embeddings' failure modes (§6), so the embedding axis is **not** subordinated to them. Agreement
 between the two (ρ, §5) is corroboration, not validation against truth — and the two can
-legitimately diverge (§5/§9: the domain-general judge vs the molecular embedding poles).
+legitimately diverge (§5/§9: the domain-general judge vs the molecular embedding poles). Both
+axes are now adjudicated against a Barbieri-anchored **gold set** (§10) — the first authority
+ground truth, which has **replaced** corpus-wide axis-vs-axis ρ as the adjudicator.
 
 **Topic stratification (diagnostic, not a third axis).** The corpus is additionally mapped onto
 the 24 scientometric topics of Paredes & Prinz (2025): each paper chunk is assigned to its
@@ -68,7 +71,7 @@ Barbieri's strict molecular definition above.
 
 ## 2. The data & processing pipeline (reproducible, end-to-end)
 
-Each step lists **script → input → output → tests**. Run `pytest` (284 tests, fully offline —
+Each step lists **script → input → output → tests**. Run `pytest` (368 tests, fully offline —
 fake encoder/tokenizer, no GPU/DB) after any change. MySQL on asushimu is the system of record
 from step 5 on. Tests live in **`tests/`**; an empty root `conftest.py` puts the repo root on
 `sys.path` so the in-root modules import from the subdir.
@@ -147,6 +150,18 @@ from step 5 on. Tests live in **`tests/`**; an empty root `conftest.py` puts the
      embedding columns; Spearman ρ(e, verdict) per method × criterion; per-topic ρ (§2.1); pole
      separation + width `within`; control checks.
 
+8. **Build the gold reference set** — `build_gold_set.py` (§10)
+   - in: `biological_codes.csv` + `chunk_topics` + `gold/molecular_topics.csv` + seminal PDFs ·
+     out: git-tracked **`gold_set.csv`** → materialised into MySQL `gold_labels` (run-/judge-agnostic
+     ground truth). Subcommands `select` / `cite` / `implicit` / `exclude` / `materialise`.
+   - tests: `test_build_gold_set.py`.
+
+9. **Gold-set validation report** — `make_gold_report.py` (§10)
+   - in: MySQL (`fetch_report` + `fetch_gold`) · out: `gold_report.md`. Joins gold polarity × `e` ×
+     categorical verdict per criterion → embedding axis (AUC, ρ) + judge axis (precision/recall/F1)
+     split by tier. The authority adjudicator that **replaces** corpus-wide ρ (§5/§10).
+   - tests: `test_make_gold_report.py`.
+
 ### 2.1 Scientometric topic stratification
 
 Maps the corpus onto the **24 topics** of Paredes & Prinz (2025) to stratify the ρ diagnosis
@@ -185,15 +200,20 @@ on an existing DB. Tables:
 - **`verdicts`** — one row per `(code_number, pdf_path, criterion, model)`; columns `verdict`,
   `confidence`, `graded`, `prompt_hash`, `run_ts`. Labels are shared across *embedding* runs
   (judged once per judge, JOINed on `(code_number, pdf_path, criterion)`). `chunk_verdicts` is
-  likewise judge-keyed (PK `…, chunk_idx, model`) and carries the per-chunk diagnostics.
-  `fetch_report` / `fetch_chunk_verdicts` take an optional `judge=` filter; unfiltered, the
-  newest judge wins per key (`ORDER BY run_ts` last-wins).
+  likewise judge-keyed (PK `…, chunk_idx, model`) and carries the per-chunk diagnostics, including
+  the pre-gate snapshot `raw_agreement` / `coverage` / `grounding_failed` (§9) so the fuzzy-gate
+  `τ/L` is re-tunable offline (parity with the §4 levers). `fetch_report` / `fetch_chunk_verdicts`
+  take an optional `judge=` filter; unfiltered, the newest judge wins per key (`ORDER BY run_ts`
+  last-wins).
 - **`prompt_registry`** (`prompt_hash` PK, `criterion`, `prompt_text`, `run_ts`) — prompt
   provenance: `prompt_hash = criteria_judge.prompt_hash(criterion)` is a sha256 over the
   version-bearing prompt scaffold, stamped onto every verdict/chunk_verdict so prompt versions
   are distinguishable; `register_prompts` stores each version's full template text once.
 - **`topic_centroids`** (`run, topic_id, label, dim, vec`), **`chunk_topics`** (`run, pdf_path,
   chunk_idx, method, topic_id, sim`) — the §2.1 layer; both run-keyed.
+- **`gold_labels`** (`code_number, pdf_path, polarity, criterion` PK; `tier, source, evidence,
+  run_ts`) — the §10 Barbieri-anchored ground truth, **run- and judge-agnostic**, JOINed to both
+  `embedding_scores` and `verdicts` on `(code_number, pdf_path, criterion)`.
 - **`pole_separation`** (incl. centred `within` rows), **`control_scores`**, **`run_meta`** (lever
   params + scoring mode) — all run-scoped.
 
@@ -228,7 +248,7 @@ overfitting synthetic labels. The binding constraint is the model + pole separat
 ~0.51–0.68), not the levers. Full sweep table: `@test_runs.md` Run 1. `sweep_levers.py` is kept
 as the re-runnable diagnostic for a future model's vectors.
 
-## 5. Current result — ρ is measurable within coherent strata, not corpus-wide
+## 5. The ρ diagnosis — measurable within coherent strata, not corpus-wide
 
 The embedding corpus is **219 papers** (after dropping the in-corpus self-reference); the whole
 corpus now carries graded **domain-general** verdicts (§9). The headline:
@@ -245,12 +265,14 @@ corpus now carries graded **domain-general** verdicts (§9). The headline:
 - **Per-topic ρ is diagnostic only** — it holds the halo fixed and the axis works within coherent
   strata (e.g. Morphological Codes, Binding Code), but most strata are flat `not_met` / `n/a`.
 
-Full distributions, ρ tables and per-topic breakdown: `@test_runs.md` Runs 2, 6, 7.
+Because corpus-wide ρ no longer adjudicates the domain-general judge, the **gold set (§10)** is
+now the live adjudicator; ρ is retained as a within-stratum diagnostic, not the verdict on either
+axis. Full distributions, ρ tables and per-topic breakdown: `@test_runs.md` Runs 2, 6, 7.
 
 ## 6. ⚠️ Major caveats (the verdicts are not ground truth)
 
-ρ measures agreement between two imperfect axes, not correctness. The verdicts are synthetic and
-have **not** been validated against a gold set:
+ρ measures agreement between two imperfect axes, not correctness. These are the failure modes the
+verdicts carry — the reasons the §9 redesign and the §10 gold set were built:
 - **Poor calibration** — the pre-redesign `confidence` field clustered at 0.95–1.0 with no usable
   gradation (which is *why* the embedding axis exists, and why §9 moved gradation onto
   `agreement`).
@@ -258,13 +280,15 @@ have **not** been validated against a gold set:
   than the sentence in the context of its paragraph. The §9 grounding gate + graded axis target
   exactly this.
 
-**The genuine binding constraint is label quality, not the embedding axis (§8).** The live next
-step is a gold-set validation, not more axis tuning.
+**The genuine binding constraint is label quality, not the embedding axis (§8).** The verdicts
+have now been validated against the Barbieri-anchored gold set (§10), which **confirmed** this:
+the embedding axis does not recover the molecular-authority distinction, and the live next steps
+are label-quality moves (hard negatives, a per-paper tier-2 audit), **not** more axis tuning.
 
 ## 7. Development, testing & reporting rules
 
 1. **TDD** — for any new or changed functionality, write a failing test first, then the change.
-   The suite is **274 tests, fully offline**, under **`tests/`** (root `conftest.py` puts the
+   The suite is **368 tests, fully offline**, under **`tests/`** (root `conftest.py` puts the
    repo root on `sys.path`).
 2. **Language** — pythonic, readable; prefer numpy for data management.
 3. **Run logs → `./logs/`** (gitignored). Write **all** run logs (background jobs, judge/embed
@@ -282,12 +306,8 @@ step is a gold-set validation, not more axis tuning.
 7. **Secrets** — `.env` is gitignored and never committed; never print API keys.
 8. **DB backup before schema changes** — always take a compressed `mysqldump` of `codebiology`
    **before** any schema change (new table/column, `ALTER`, migration, first `init_schema` on new
-   DDL): `mysqldump --single-transaction --no-tablespaces … codebiology | gzip > codebiology_$(date
-   +%Y%m%d_%H%M%S).sql.gz` (connection detail in `@environment_notes.md`; dumps are gitignored).
-   `--no-tablespaces` is **required** — the pipeline DB user lacks the global `PROCESS` privilege,
-   so without it mysqldump errors out probing tablespaces; `--single-transaction` gives a
-   consistent snapshot without locking. Migrations are idempotent and guarded, but the dump is the
-   non-negotiable rollback path.
+   DDL). Migrations are idempotent and guarded, but the dump is the non-negotiable rollback path.
+   Exact command, required flags and connection detail: `@environment_notes.md`.
 
 ## 8. Embedding side is at its ceiling — the constraint is label quality
 
@@ -302,8 +322,10 @@ Embedding-side tuning is judged exhausted, and all three escape hatches are spen
   well-formed (`within` 0.59–0.64) but **corpus-wide ρ stayed flat** — confirming, not fixing, the
   constraint. `@test_runs.md` Run 7.
 
-**The genuine constraint is now label quality, not the embedding** (§6) — the next real step is
-the gold-set validation, not more embedding-side work.
+**The genuine constraint is now label quality, not the embedding** (§6) — and the gold-set
+validation (§10) has now **confirmed this against authority**: the domain-general poles rank the
+neural-register soft negatives *above* the molecular gold positives (Run 11), so `e` keys on
+topicality/register, not code-demonstration. No further embedding-side work is warranted.
 
 ## 9. Judge redesign — graded, per-chunk, topic-grounded, control-anchored
 
@@ -312,11 +334,15 @@ Acting on §6/§8 ("the constraint is label quality"), the LLM judge was rebuilt
 via `chunk_text.reproduce_chunks` → tokenizer-aligned to `doc_vectors`), **topic-grounded**
 (dominant scientometric topic injected as *context, not evidence*), **control-anchored**
 (illustrative AGREE/DISAGREE exemplars from `prototypes.json` `_controls`), **calibrated** judge.
-A grounding gate pulls any positive whose `evidence_quote` is not verbatim in the chunk back to
-`0.0`; `aggregate_graded` max-pools chunks → `(graded_max, graded_mean, confidence, categorical)`
-with `graded_max ≥ +0.5 → met`, `≤ 0.0 → not_met`, else `unclear`. Schema: `verdicts.graded
-DOUBLE` + run-agnostic `chunk_verdicts` (§3). **Validation is distribution-comparison only — no
-gold set (locked).**
+A **fuzzy** grounding gate (`is_grounded(quote, chunk, τ=0.85, L=15)` — a quote grounds iff
+coverage ≥ τ over possibly-spliced verbatim spans **and** longest contiguous block ≥
+`min(L, len(quote))`; strict-verbatim is the `τ=1.0` special case) pulls any ungrounded positive
+back to `0.0`. The strict-verbatim predecessor over-zeroed ~92% of quote-bearing positives on
+formatting drift, not hallucination (`@test_runs.md` Runs 9–10); the pre-gate `raw_agreement` /
+`coverage` / `grounding_failed` are now stored (§3) so `τ/L` re-tunes offline. `aggregate_graded`
+max-pools chunks → `(graded_max, graded_mean, confidence, categorical)` with `graded_max ≥ +0.5 →
+met`, `≤ 0.0 → not_met`, else `unclear`. Schema: `verdicts.graded DOUBLE` + run-agnostic
+`chunk_verdicts` (§3). Adjudicated against the §10 gold set.
 
 **Pipeline.** `judge_pilot.py` (driver, top-N topics or `--rest` complement, resumable per-chunk
 JSONL checkpoint) → `compare_verdicts.py --snapshot old.json` *before* / `--old old.json` *after*
@@ -324,22 +350,18 @@ JSONL checkpoint) → `compare_verdicts.py --snapshot old.json` *before* / `--ol
 DeepSeek V4 Pro (§6 routing). Launcher / tokenizer / runtime detail: `@environment_notes.md`.
 
 **State.** The whole 219-paper corpus carries domain-general verdicts (102 neuro top-4 + 117
-molecular tail). The grounding gate held throughout (every positive quote-grounded), the judge is
-*more* skeptical than the retired one, and gradation moved off the dead `confidence` field onto
-`agreement` — materialising on the molecular tail (`adaptors` graded std 0.40). Results and the
-corpus-wide ρ divergence (§5): `@test_runs.md` Runs 4–7. A **corpus-wide / paid all-criteria run
-is gated on the gold-set plan, not on ρ(e, verdict)** — which no longer adjudicates the
-domain-general judge corpus-wide (§5).
+molecular tail), and the **gold subset (447 papers) has been re-judged fresh under the fuzzy gate
+by paid DeepSeek V4 Pro** (§10, Run 11). The judge is *more* skeptical than the retired one, and
+gradation moved off the dead `confidence` field onto `agreement` — materialising on the molecular
+tail (`adaptors` graded std 0.40). Results and the corpus-wide ρ divergence (§5): `@test_runs.md`
+Runs 4–7. A **corpus-wide / paid all-criteria run** remains gated on the §10 label-quality work,
+not on ρ(e, verdict).
 
 **AGREE-anchor ablation (done — negative result).** `judge_pilot.py --agree-anchors {genetic,
-neural,neural-genetic}` swaps the AGREE exemplar's *domain* (molecular genetic 1-shot baseline vs
-neural 1-shot vs neural+genetic 2-shot) to test whether the molecular anchor biases the judge
-toward marking molecular passages met. Variants carry distinct judge tags (`@neural-1shot`,
-`@neural-genetic-2shot`) so they coexist with the baseline (`AGREE_ANCHOR_VARIANTS`, tests in
-`test_judge_pilot.py`). **Result (`@test_runs.md` Run 8, paid DeepSeek, 60-paper neuro set): the
-anchor domain does not bias the judge** — swapping it moves ≤14% of keys at noise-level effect
-sizes (≤0.033 on −1…+1); the verdicts are robust to the exemplar's domain. Confirms label quality,
-doesn't threaten it.
+neural,neural-genetic}` swaps the AGREE exemplar's *domain* to test whether the molecular anchor
+biases the judge; variants carry distinct judge tags so they coexist with the baseline. **The
+anchor domain does not bias the judge** (`@test_runs.md` Run 8, paid DeepSeek) — confirms label
+quality, doesn't threaten it.
 
 ### 9.1 Domain-general criteria — molecular-bias fix
 The molecular-specific `CRITERIA_DEFS` mechanically rejected every non-molecular paper
@@ -352,3 +374,37 @@ system, imaginal function, computational engine). This broadens what the *judge*
 the field's cross-domain claims; it does **not** alter Barbieri's strict molecular definition (§1).
 The DB criterion **key stays `adaptors`** (PK stability); only its definition *text* changed.
 Validating re-pilot: `@test_runs.md` Run 5.
+
+## 10. Gold-set validation — both axes adjudicated against authority
+
+Acting on §6/§8, a **Barbieri-anchored gold reference set** lets the two synthetic axes be judged
+against *authority* rather than against each other. `gold_set.csv` (git-tracked, human-auditable)
+→ `gold_labels` (MySQL, run-/judge-agnostic ground truth; §3). Composition:
+- **208 positives** — 4 **tier-1** Barbieri/Major seminal texts (code 0, `source=code0`) + 204
+  **tier-2** papers endorsed as the supporting literature of a molecular code in
+  `biological_codes.csv` (`source=db`).
+- **240 soft negatives** — papers whose dominant scientometric topic ∉ the molecular allowlist
+  (`gold/molecular_topics.csv`) **and** absent from every molecular code's reference list
+  (`source=implicit`); in practice **neural-heavy** (the Run 4/6 neuro strata).
+
+Build/validate tooling: `build_gold_set.py` (§2 step 8) + `make_gold_report.py` (§2 step 9).
+
+**Result — `@test_runs.md` Run 11** (paid DeepSeek V4 Pro, whole gold set re-judged fresh under
+the §9 fuzzy gate, **$17.48**, 447 papers joined):
+- **The embedding axis is *anti*-correlated with authority** — `two_worlds` AUC **0.19**, all ρ
+  negative. The domain-general poles (§8) rank the neural-register soft negatives *above* the
+  dense molecular positives (mean `e` two_worlds: gold+ −0.015 vs gold− +0.031). This **quantifies
+  the §5/§8 divergence against authority**: `e` keys on topicality/register, not code-demonstration.
+- **The judge is the better-aligned axis but conservative** — `adaptors` precision **0.69**
+  (strongest, as §5), but recall **0.10–0.21** across criteria: it withholds `met` on most tier-2
+  positives.
+- **Two confounds, not the axes per se:** (a) the soft-negative pool is neural-heavy, so AUC
+  conflates *genre* with *not-a-code*; (b) tier-2 is a coarse "in a code's reference list" label,
+  not per-paper per-criterion demonstration, which depresses recall.
+
+**Live next steps (label-quality, not axis tuning):** a topic-matched / **hard-negative** set
+(Barbieri's explicit exclusions, `build_gold_set.py exclude`) to separate register from
+code-demonstration; a **per-paper tier-2 audit** to sharpen the positive label. **Phase 3
+(Barbieri-cited tier-1 upgrade) is a confirmed dead end** — Barbieri's bibliography and the ISCB
+code list are near-disjoint corpora (0 valid promotions; Run 11), so **tier-1 stays = the 4 code-0
+texts**.
