@@ -1,12 +1,24 @@
 # CLAUDE.md
 
 High-level design, development, testing and reporting guide for the Code Biology project —
-the **current** design and the live decisions it rests on, nothing dated. Two sister files
-hold what this one deliberately omits:
-- `@environment_notes.md` — host-specific operational detail (GPUs, MySQL host, llama-server
-  launchers, model runtimes, download recipes).
+session-critical **design + methodology only**: the **current** design and the live decisions
+it rests on, nothing dated or operational. Three sister files hold what this one deliberately
+omits — a § ending "→ `@sw_env.md`" means read it there before doing that op:
+- `@sw_env.md` — project-specific **operational reference**: the GPU-host launcher/model map,
+  llama-server swap runbooks, MySQL + backup mechanics, model-download recipes, env vars,
+  runtime-state files. New operational reference goes straight there, at most a one-line
+  pointer here naming the exact heading.
+- `@hw_env.md` — a **symlink** to the shared `~/Work/homelab/hw_env.md`: the canonical
+  hardware/host inventory (GPUs, card UUIDs, VRAM, hosts) for the whole home lab. Never edit
+  hardware facts through this repo — edit the homelab repo and commit there.
 - `@test_runs.md` — the chronological **run log** (dated results, distributions, ρ tables,
   shelved experiments). CLAUDE.md cites these runs for the evidence behind each live decision.
+
+**Code outranks this file.** When what's written here disagrees with the code, the code is the
+truth for current behavior: fix the stale § in the same session and say so in the commit.
+**Migrate, don't delete** — any operational fact trimmed from here must land in `@sw_env.md`
+(or already exist there); deliberately-defensive design notes (thresholds, "don't collapse X"
+rationale) are never code-derivable, so they stay here.
 
 **Working axis:** the project focuses on **chunked embeddings** (8192-token windows) and a
 **per-chunk LLM judge**. The earlier full-paper / abstract granularities are retired (chunk
@@ -117,7 +129,7 @@ from step 5 on. Tests live in **`tests/`**; an empty root `conftest.py` puts the
    - in: paper texts + prototype passages · out: transient `embed_out.json` (transport only).
    - Emits **raw vectors only** — document vectors and pooled pole vectors (3 criteria × pos/neg).
      It does **not** compute `e`. Model `microsoft/harrier-oss-v1-27b` (5376-dim); host/runtime
-     in `@environment_notes.md`.
+     in `@sw_env.md`.
    - **Working granularity is `chunk`** — 8192-token windows, 50% overlap, scored per-window then
      **max-pooled**. (Retired `full`/`abstract` still emitted for provenance.)
    - tests: `test_run_harrier_embed.py`.
@@ -141,7 +153,7 @@ from step 5 on. Tests live in **`tests/`**; an empty root `conftest.py` puts the
      `verdicts` (judge-keyed; §3).
    - **Routing:** local **Gemma-4-31B** (free) or paid **DeepSeek V4 Pro** via OpenRouter
      (concurrent, resumable, per-paper failure isolation). Model/host/pricing in
-     `@environment_notes.md`.
+     `@sw_env.md`.
    - tests: `test_criteria_judge.py`, `test_openrouter_agent.py`, `test_judge_pilot.py`.
 
 7. **Generate the report** — `embed_independent.py --report-only`
@@ -180,7 +192,7 @@ Maps the corpus onto the **24 topics** of Paredes & Prinz (2025) to stratify the
 
 ## 3. MySQL schema (`db.py`) — system of record
 
-DB `codebiology` on asushimu (connection detail in `@environment_notes.md`). Vectors are float32
+DB `codebiology` on asushimu (connection detail in `@sw_env.md`). Vectors are float32
 LE bytes in `LONGBLOB`.
 
 **Two independent versioning keys** let multiple models coexist non-destructively:
@@ -287,9 +299,17 @@ are label-quality moves (hard negatives, a per-paper tier-2 audit), **not** more
 
 ## 7. Development, testing & reporting rules
 
+**Toolchain.** This runs on **ambient miniconda Python — not `uv`**; there is no
+`pyproject.toml`/`uv.lock`/`requirements.txt` and no project `.venv`. Run everything through
+`python`/`python -m pytest` (interpreter + asushimu-side dep pins → `@sw_env.md` "Python
+environment"). The quality gate is the offline suite — no ruff/mypy is configured (command +
+`.coveragerc` scope → `@sw_env.md` "Quality gate"). **Python computes, the model reasons:**
+anything expressible as a rule with a threshold lives in code under test (the §4 levers, the §9
+fuzzy gate), never in a prompt — that split is why the two axes are independent.
+
 1. **TDD** — for any new or changed functionality, write a failing test first, then the change.
    The suite is **368 tests, fully offline**, under **`tests/`** (root `conftest.py` puts the
-   repo root on `sys.path`).
+   repo root on `sys.path`). Test names state the scenario; read failure logs before re-running.
 2. **Language** — pythonic, readable; prefer numpy for data management.
 3. **Run logs → `./logs/`** (gitignored). Write **all** run logs (background jobs, judge/embed
    driver logs) there; keep only the actively-running job's log elsewhere. Don't scatter logs in
@@ -307,7 +327,12 @@ are label-quality moves (hard negatives, a per-paper tier-2 audit), **not** more
 8. **DB backup before schema changes** — always take a compressed `mysqldump` of `codebiology`
    **before** any schema change (new table/column, `ALTER`, migration, first `init_schema` on new
    DDL). Migrations are idempotent and guarded, but the dump is the non-negotiable rollback path.
-   Exact command, required flags and connection detail: `@environment_notes.md`.
+   Exact command, required flags and connection detail: `@sw_env.md`.
+9. **Environment docs** — operational reference (launcher swaps, MySQL, model downloads, env
+   vars) goes to `@sw_env.md`, never here; hardware facts to `@hw_env.md` (a symlink to
+   `~/Work/homelab/hw_env.md` — edit hardware in the homelab repo, never through this one). Any
+   new asushimu-installed file gets a row in `@sw_env.md` "Remote-installed file map" in the
+   same commit.
 
 ## 8. Embedding side is at its ceiling — the constraint is label quality
 
@@ -347,7 +372,7 @@ met`, `≤ 0.0 → not_met`, else `unclear`. Schema: `verdicts.graded DOUBLE` + 
 **Pipeline.** `judge_pilot.py` (driver, top-N topics or `--rest` complement, resumable per-chunk
 JSONL checkpoint) → `compare_verdicts.py --snapshot old.json` *before* / `--old old.json` *after*
 (the new axis read from the never-overwritten `chunk_verdicts`). Free local Gemma-4-31B or paid
-DeepSeek V4 Pro (§6 routing). Launcher / tokenizer / runtime detail: `@environment_notes.md`.
+DeepSeek V4 Pro (§6 routing). Launcher / tokenizer / runtime detail: `@sw_env.md`.
 
 **State.** The whole 219-paper corpus carries domain-general verdicts (102 neuro top-4 + 117
 molecular tail), and the **gold subset (447 papers) has been re-judged fresh under the fuzzy gate
